@@ -455,11 +455,15 @@ def _merge_scorecards(
     """
     Merge a partial re-scoring into a full scorecard.
 
-    Sections in changed_sections get their scores from partial_scorecard.
+    Sections in changed_sections get their scores from partial_scorecard,
+    subject to two guards:
+    - Floor clamp: a re-scored section can never score LOWER than its base score.
+      This prevents Reviewer inconsistency from turning improvements into regressions.
+    - Ceiling clamp: a re-scored section can never exceed its max_points.
+      This prevents the Reviewer from awarding bonus points beyond the rubric max.
+
     All other sections carry forward their scores from base_scorecard.
     total_score is recomputed from the merged section scores.
-
-    This prevents Reviewer score drift on untouched sections.
     """
     merged = {
         "sections": {}
@@ -467,8 +471,19 @@ def _merge_scorecards(
 
     for name, data in base_scorecard.get("sections", {}).items():
         if name in changed_sections and name in partial_scorecard.get("sections", {}):
-            # Use fresh score for this section
-            merged["sections"][name] = partial_scorecard["sections"][name]
+            new_data = partial_scorecard["sections"][name]
+            base_score = data.get("score", 0)
+            new_score = new_data.get("score", 0)
+            max_pts = data.get("max_points", new_data.get("max_points", 100))
+
+            # Floor clamp: never regress below base score
+            # Ceiling clamp: never exceed max points
+            clamped_score = max(new_score, base_score)
+            clamped_score = min(clamped_score, max_pts)
+
+            new_data = dict(new_data)  # shallow copy to avoid mutating original
+            new_data["score"] = clamped_score
+            merged["sections"][name] = new_data
         else:
             # Carry forward original score
             merged["sections"][name] = data
