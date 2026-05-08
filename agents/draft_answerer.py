@@ -8,6 +8,8 @@ except Exception:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 client = anthropic.Anthropic(api_key=api_key)
 
+from evaluation.token_tracker import llm_call
+
 DRAFT_SYSTEM_PROMPT = """You are a senior Digital Product Manager at ServiceNow helping \
 draft answers for a SAFe Feature specification.
 
@@ -44,7 +46,8 @@ def draft_section_answers(
     notes: str,
     feature_type: str,
     section_name: str,
-    questions: list[str]
+    questions: list[str],
+    tracker=None,
 ) -> str:
     """
     Draft answers for one section of questions based on PM's notes.
@@ -74,12 +77,11 @@ Please draft answers to these questions:
 
 {numbered_questions}"""
 
-    response = client.messages.create(
+    return llm_call(
+        client, tracker, "draft_answerer",
         model="claude-sonnet-4-5-20250929",
         max_tokens=2000,
         temperature=0.3,
         system=DRAFT_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}]
     )
-
-    return response.content[0].text

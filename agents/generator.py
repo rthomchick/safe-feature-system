@@ -8,6 +8,8 @@ except Exception:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 client = anthropic.Anthropic(api_key=api_key)
 
+from evaluation.token_tracker import llm_call
+
 GENERATOR_SYSTEM_PROMPT = """You are an expert Digital Product Manager at ServiceNow \
 who writes SAFe Feature specifications for cross-functional teams including engineering, \
 devops, design, content, QA, SEO, and analytics.
@@ -58,7 +60,8 @@ FORMAT RULES:
 def generate_feature_spec(
     feature_type: str,
     preamble: str,
-    section_answers: dict[str, str]
+    section_answers: dict[str, str],
+    tracker=None,
 ) -> str:
     """
     Generate a full SAFe Feature spec from PM-approved section answers.
@@ -87,12 +90,11 @@ Where answers are marked [NEEDS INPUT], write a brief placeholder noting what is
 
 Generate the complete SAFe Feature specification now."""
 
-    response = client.messages.create(
+    return llm_call(
+        client, tracker, "generator",
         model="claude-sonnet-4-5-20250929",
         max_tokens=12000,
         temperature=0.3,
         system=GENERATOR_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}]
     )
-
-    return response.content[0].text

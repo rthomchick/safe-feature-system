@@ -8,6 +8,8 @@ except Exception:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 client = anthropic.Anthropic(api_key=api_key)
 
+from evaluation.token_tracker import llm_call
+
 ROUTER_SYSTEM_PROMPT = """You are a SAFe Feature type classifier for a digital product team at ServiceNow.
 
 Given a description of work, classify it into exactly one of these three types:
@@ -46,17 +48,72 @@ Respond with ONLY one word: CAPABILITY, EXPERIENCE, or WEBPAGE.
 No explanation. No punctuation. No other text."""
 
 
-def classify_feature(description: str) -> str:
-    """Classify a feature description into CAPABILITY, EXPERIENCE, or WEBPAGE."""
-    response = client.messages.create(
+ROUTER_SYSTEM_PROMPT_V2 = """You are a SAFe Feature type classifier for a digital product team at ServiceNow.
+
+Given a description of work, classify it into exactly one of these three types:
+
+CAPABILITY
+- Backend functionality, platform infrastructure, APIs, integrations, or reusable engines
+- The deliverable is a system, service, or data processing component with no user-visible UI
+- Signal words: engine, pipeline, API, classification, scoring, data model, event schema,
+  integration layer, identity resolution backend, buying group logic, token library
+- Ask yourself: Is the core deliverable something that runs behind the scenes — defined by
+  its data processing and system behavior, with no component states or design system spec?
+
+EXPERIENCE
+- UI components or interactive frontend features users directly see and interact with
+- The deliverable is a component with named visual states, interaction behavior, and design
+  system implementation — it has a design spec, not just backend logic
+- Signal words: component, form component, design system, Arc Design System, component states,
+  default state, loading state, error state, known-user variant, responsive behavior,
+  keyboard navigation, ARIA, progressive disclosure UI, interactive behavior
+- Ask yourself: Is the core deliverable a UI component with distinct visual states and
+  interaction behavior? A form component that calls backend APIs is EXPERIENCE if the spec
+  is primarily about what users see and interact with — not the backend logic underneath.
+
+WEBPAGE
+- New web pages or updates to existing pages where the primary work is content,
+  messaging, SEO, copywriting, or the publishing workflow
+- Signal words: page, landing page, solutions page, hero, SEO, meta title, CMS publishing,
+  content strategy, copywriting, campaign page, hreflang
+- Ask yourself: Is the core deliverable published content on a specific page (not a reusable
+  component that can be placed on many pages)?
+
+TIEBREAKER RULES — when the work spans multiple types:
+- "Progressive profiling form component" with Arc Design System → EXPERIENCE
+  (component states and UI behavior are the core work, not the backend engine)
+- "Progressive profiling engine / classification API" → CAPABILITY
+  (backend data logic is the core work; no UI component states)
+- Adobe Target integration (backend) → CAPABILITY
+  A form that uses Adobe Target to select a variant → EXPERIENCE
+- New page with a custom interactive component → WEBPAGE for the page; EXPERIENCE for the component
+- Marquee copy update / content refresh → WEBPAGE
+- If the description explicitly names Arc Design System, component states, or design system
+  patterns as core deliverables → EXPERIENCE (not CAPABILITY)
+- If the description names SEO, meta tags, or content publishing as core work → WEBPAGE
+
+Respond with ONLY one word: CAPABILITY, EXPERIENCE, or WEBPAGE.
+No explanation. No punctuation. No other text."""
+
+
+def classify_feature(description: str, tracker=None, system_prompt: str | None = None) -> str:
+    """Classify a feature description into CAPABILITY, EXPERIENCE, or WEBPAGE.
+
+    Args:
+        description:   The feature description to classify.
+        tracker:       Optional TokenTracker for recording LLM usage.
+        system_prompt: Override the router system prompt (e.g. for A/B testing).
+                       Defaults to ROUTER_SYSTEM_PROMPT if not supplied.
+    """
+    prompt = system_prompt if system_prompt is not None else ROUTER_SYSTEM_PROMPT
+    result = llm_call(
+        client, tracker, "router",
         model="claude-haiku-4-5-20251001",
         max_tokens=10,
         temperature=0.0,
-        system=ROUTER_SYSTEM_PROMPT,
+        system=prompt,
         messages=[{"role": "user", "content": description}]
-    )
-
-    result = response.content[0].text.strip().upper()
+    ).strip().upper()
 
     # Parse defensively — extract the type even if Claude adds extra text
     for feature_type in ["CAPABILITY", "EXPERIENCE", "WEBPAGE"]:
