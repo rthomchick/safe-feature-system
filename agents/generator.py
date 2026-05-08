@@ -92,7 +92,7 @@ Generate the complete SAFe Feature specification now."""
 
     return llm_call(
         client, tracker, "generator",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=12000,
         temperature=0.3,
         system=GENERATOR_SYSTEM_PROMPT,

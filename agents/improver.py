@@ -23,7 +23,7 @@ except Exception:
 
 client = anthropic.Anthropic(api_key=api_key)
 
-from evaluation.token_tracker import llm_call
+from evaluation.token_tracker import llm_call, llm_call_with_advisor
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +267,7 @@ def _append_only_improve(
     failing_criteria: list[dict],
     additional_context: str = "",
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Improvement path for structured sections (User Stories) where existing
@@ -305,9 +306,10 @@ These specific criteria scored below their maximum and need to be addressed:
 {context_block}
 Return ONLY <additions> and <modifications> blocks. Do NOT return the existing content."""
 
-    llm_output = llm_call(
+    call_fn = llm_call_with_advisor if use_advisor else llm_call
+    llm_output = call_fn(
         client, tracker, "improver",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0.2,
         system=APPEND_ONLY_SYSTEM_PROMPT,
@@ -356,6 +358,7 @@ def _standard_improve(
     failing_criteria: list[dict],
     additional_context: str = "",
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Standard improvement path for sections where regeneration is acceptable.
@@ -391,9 +394,10 @@ Make only the targeted additions or corrections needed for these criteria. \
 Preserve all other content exactly as written. \
 Start your output with the same ## heading as the input section."""
 
-    return llm_call(
+    call_fn = llm_call_with_advisor if use_advisor else llm_call
+    return call_fn(
         client, tracker, "improver",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0.3,
         system=IMPROVER_SYSTEM_PROMPT,
@@ -411,6 +415,7 @@ def _improve_single_section(
     failing_criteria: list[dict],
     additional_context: str = "",
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Route to the appropriate improvement strategy based on section name.
@@ -422,6 +427,7 @@ def _improve_single_section(
             failing_criteria=failing_criteria,
             additional_context=additional_context,
             tracker=tracker,
+            use_advisor=use_advisor,
         )
     else:
         return _standard_improve(
@@ -430,6 +436,7 @@ def _improve_single_section(
             failing_criteria=failing_criteria,
             additional_context=additional_context,
             tracker=tracker,
+            use_advisor=use_advisor,
         )
 
 
@@ -442,6 +449,7 @@ def _generate_addendum(
     missing_sections: list[dict],
     additional_context: dict = None,
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Generate new ## heading blocks for sections that don't exist in the spec at all.
@@ -485,9 +493,10 @@ Address only the specific failing criteria listed for each section.
 Write each missing section as a ## heading block. Use details from the existing \
 spec to make the content specific and relevant. Return all sections together."""
 
-    return llm_call(
+    call_fn = llm_call_with_advisor if use_advisor else llm_call
+    return call_fn(
         client, tracker, "improver",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         temperature=0.3,
         system=ADDENDUM_SYSTEM_PROMPT,
@@ -504,6 +513,7 @@ def improve_spec(
     scorecard: dict,
     additional_context: dict = None,
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Improve weak sections of a spec using the PARSE → EDIT → REASSEMBLE pattern.
@@ -609,6 +619,7 @@ def improve_spec(
             failing_criteria=failing_criteria,
             additional_context=extra,
             tracker=tracker,
+            use_advisor=use_advisor,
         )
 
         # Place improved content at the position of the first matching heading.
@@ -632,6 +643,7 @@ def improve_spec(
             missing_sections=addendum_sections,
             additional_context=additional_context,
             tracker=tracker,
+            use_advisor=use_advisor,
         )
         improved_spec = improved_spec.rstrip() + "\n\n---\n\n" + addendum
 
@@ -689,6 +701,7 @@ def polish_spec(
     scorecard: dict,
     additional_context: dict = None,
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Polish pass for sections scoring 75-89%. Uses append-only strategy for
@@ -760,6 +773,7 @@ def polish_spec(
             failing_criteria=failing_criteria,
             additional_context=extra,
             tracker=tracker,
+            use_advisor=use_advisor,
         )
 
         first_idx = matching_indices[0]
@@ -785,6 +799,7 @@ def _polish_single_section(
     failing_criteria: list[dict],
     additional_context: str = "",
     tracker=None,
+    use_advisor: bool = False,
 ) -> str:
     """
     Append-only polish for a section scoring 75-89%.
@@ -820,9 +835,10 @@ These criteria have minor gaps (section already scores 75%+):
 {context_block}
 Return ONLY <additions> and <modifications> blocks to close these gaps."""
 
-    llm_output = llm_call(
+    call_fn = llm_call_with_advisor if use_advisor else llm_call
+    llm_output = call_fn(
         client, tracker, "improver",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=1500,
         temperature=0.2,
         system=POLISH_SYSTEM_PROMPT,

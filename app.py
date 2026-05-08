@@ -321,7 +321,8 @@ def stage_review():
         with st.spinner("Scoring spec against 100-point rubric..."):
             scorecard = review_feature_spec(
                 st.session_state.spec,
-                feature_type=st.session_state.feature_type
+                feature_type=st.session_state.feature_type,
+                use_advisor=st.session_state.get("use_advisor", False),
             )
         st.session_state.scorecard = scorecard
 
@@ -519,7 +520,8 @@ def stage_improve():
         improved = improve_spec(
             st.session_state.spec,
             original_scorecard,
-            additional_context
+            additional_context,
+            use_advisor=st.session_state.get("use_advisor", False),
         )
 
     # Determine which sections were actually changed by the Improver
@@ -534,7 +536,8 @@ def stage_improve():
         if changed_sections:
             partial_scorecard = review_sections(
                 improved, list(changed_sections),
-                feature_type=st.session_state.feature_type
+                feature_type=st.session_state.feature_type,
+                use_advisor=st.session_state.get("use_advisor", False),
             )
         else:
             partial_scorecard = {"sections": {}}
@@ -583,7 +586,8 @@ def stage_improve():
                 improved = improve_spec(
                     improved,
                     filtered_scorecard,
-                    additional_context
+                    additional_context,
+                    use_advisor=st.session_state.get("use_advisor", False),
                 )
 
             changed_pass2 = set(improve_spec.last_debug.get("weak_rubric_sections", []))
@@ -592,7 +596,8 @@ def stage_improve():
                 if changed_pass2:
                     partial_scorecard_2 = review_sections(
                         improved, list(changed_pass2),
-                        feature_type=st.session_state.feature_type
+                        feature_type=st.session_state.feature_type,
+                        use_advisor=st.session_state.get("use_advisor", False),
                     )
                 else:
                     partial_scorecard_2 = {"sections": {}}
@@ -610,7 +615,8 @@ def stage_improve():
             polished = polish_spec(
                 improved,
                 improved_scorecard,
-                additional_context
+                additional_context,
+                use_advisor=st.session_state.get("use_advisor", False),
             )
 
         polish_changed = set(polish_spec.last_debug.get("polish_candidates", []))
@@ -619,7 +625,8 @@ def stage_improve():
             with st.spinner("Re-scoring polished sections..."):
                 partial_polish = review_sections(
                     polished, list(polish_changed),
-                    feature_type=st.session_state.feature_type
+                    feature_type=st.session_state.feature_type,
+                    use_advisor=st.session_state.get("use_advisor", False),
                 )
 
             improved_scorecard = _merge_scorecards(
@@ -707,6 +714,12 @@ def stage_final():
         if st.button("↺ Build Another Spec"):
             reset()
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ════════════════════════════════════════════════════════════════════════════
+use_advisor = st.sidebar.checkbox("🧠 Use Opus Advisor (Reviewer + Improver)", value=False)
+st.session_state["use_advisor"] = use_advisor
 
 # ════════════════════════════════════════════════════════════════════════════
 # STAGE ROUTER

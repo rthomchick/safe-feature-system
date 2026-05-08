@@ -12,7 +12,7 @@ except Exception:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 client = anthropic.Anthropic(api_key=api_key)
 
-from evaluation.token_tracker import llm_call
+from evaluation.token_tracker import llm_call, llm_call_with_advisor
 
 REVIEWER_SYSTEM_PROMPT = """You are a SAFe Feature specification reviewer at ServiceNow. \
 You score feature specs against a 100-point rubric and return structured JSON.
@@ -126,7 +126,7 @@ def _build_rubric_text() -> str:
     return "\n".join(parts)
 
 
-def review_feature_spec(spec: str, feature_type: str = None, tracker=None) -> dict:
+def review_feature_spec(spec: str, feature_type: str = None, tracker=None, use_advisor: bool = False) -> dict:
     """
     Score a SAFe Feature spec against the 100-point rubric.
 
@@ -154,9 +154,10 @@ SPECIFICATION TO SCORE:
 
 Return your scores as JSON only."""
 
-    raw = llm_call(
+    call_fn = llm_call_with_advisor if use_advisor else llm_call
+    raw = call_fn(
         client, tracker, "reviewer",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=9000,
         temperature=0.0,
         system=REVIEWER_SYSTEM_PROMPT,
@@ -210,7 +211,7 @@ def _build_section_rubric_text(rubric_section_names: list[str]) -> str:
     return "\n".join(parts)
 
 
-def review_sections(spec: str, section_names: list[str], feature_type: str = None, tracker=None) -> dict:
+def review_sections(spec: str, section_names: list[str], feature_type: str = None, tracker=None, use_advisor: bool = False) -> dict:
     """
     Score ONLY the specified rubric sections of a spec, in isolation.
 
@@ -251,9 +252,10 @@ SPECIFICATION:
 
 Return your scores as JSON only. Include only the sections listed above."""
 
-    raw = llm_call(
+    call_fn = llm_call_with_advisor if use_advisor else llm_call
+    raw = call_fn(
         client, tracker, "reviewer",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=4000,
         temperature=0.0,
         system=REVIEWER_SYSTEM_PROMPT,

@@ -97,6 +97,7 @@ def run_case(
     prompt_ids: dict,
     store: ResultStore,
     router_system_prompt: str | None = None,
+    use_advisor: bool = False,
 ) -> dict:
     """Run one golden-set entry through classify → generate → review.
 
@@ -135,7 +136,7 @@ def run_case(
     )
 
     # ── Step 3: Reviewer ──────────────────────────────────────────────────────
-    scorecard = review_feature_spec(spec, feature_type=feature_type, tracker=tracker)
+    scorecard = review_feature_spec(spec, feature_type=feature_type, tracker=tracker, use_advisor=use_advisor)
 
     elapsed = round(time.time() - t0, 1)
 
@@ -279,6 +280,7 @@ def main(
     case_filter: str | None = None,
     verbose: bool = False,
     router_version: str = "v1",
+    use_advisor: bool = False,
 ) -> list[dict]:
     """Run eval against all (or one) golden-set entries.
 
@@ -320,7 +322,7 @@ def main(
     for entry in cases:
         print(f"\nRunning {entry['id']}  ({entry.get('name', '')})")
         try:
-            result = run_case(entry, prompt_ids, store, router_system_prompt=router_system_prompt)
+            result = run_case(entry, prompt_ids, store, router_system_prompt=router_system_prompt, use_advisor=use_advisor)
             results.append(result)
 
             score_s = (
@@ -369,5 +371,10 @@ if __name__ == "__main__":
         default="v1",
         help="Router prompt version to use: v1 (default) or v2",
     )
+    parser.add_argument(
+        "--advisor",
+        action="store_true",
+        help="Enable Opus advisor for Reviewer and Improver",
+    )
     args = parser.parse_args()
-    main(case_filter=args.case, verbose=args.verbose, router_version=args.router)
+    main(case_filter=args.case, verbose=args.verbose, router_version=args.router, use_advisor=args.advisor)

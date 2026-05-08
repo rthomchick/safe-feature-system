@@ -13,6 +13,7 @@ from evaluation.eval_db import get_connection, DEFAULT_DB_PATH
 
 # Pricing per million tokens (USD). Update when Anthropic changes prices.
 _TOKEN_COSTS: dict[str, dict[str, float]] = {
+    "claude-opus-4-7":            {"input": 15.00, "output": 75.00},
     "claude-opus-4-6":            {"input": 15.00, "output": 75.00},
     "claude-sonnet-4-6":          {"input":  3.00, "output": 15.00},
     "claude-sonnet-4-5-20250929": {"input":  3.00, "output": 15.00},
@@ -98,6 +99,83 @@ class TokenTracker:
                     for r in self._records
                 ],
             )
+
+
+def llm_call_with_advisor(
+    client,
+    tracker: TokenTracker | None,
+    agent: str,
+    advisor_model: str = "claude-opus-4-7",
+    max_advisor_uses: int = 2,
+    **kwargs,
+) -> str:
+    """llm_call() variant that enables the Opus advisor tool.
+
+    Uses client.beta.messages.create() with the advisor-tool-2026-03-01 beta.
+    The executor (Sonnet) drives the task; Opus advises when consulted.
+    If the advisor is overloaded or hits max_uses, the executor continues
+    without advice — no failure, just graceful degradation.
+
+    Args:
+        client:            anthropic.Anthropic instance
+        tracker:           TokenTracker for the current run, or None
+        agent:             pipeline stage name (e.g. "reviewer")
+        advisor_model:     advisor model string (default "claude-opus-4-7")
+        max_advisor_uses:  max advisor consultations per request (default 2)
+        **kwargs:          passed to client.beta.messages.create()
+                           (model, max_tokens, temperature, system, messages)
+
+    Returns:
+        Concatenated text from all text blocks in the response.
+        Identical return type to llm_call().
+    """
+    advisor_tool = {
+        "type": "advisor_20260301",
+        "name": "advisor",
+        "model": advisor_model,
+        "max_uses": max_advisor_uses,
+    }
+    existing_tools = kwargs.pop("tools", None) or []
+    kwargs["tools"] = existing_tools + [advisor_tool]
+
+    response = client.beta.messages.create(
+        betas=["advisor-tool-2026-03-01"],
+        **kwargs,
+    )
+
+    text_parts = []
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            text_parts.append(block.text)
+
+    if tracker is not None:
+        tracker.record(
+            agent=agent,
+            model=kwargs.get("model", "unknown"),
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+        )
+        for iteration in getattr(response.usage, "iterations", None) or []:
+            if isinstance(iteration, dict):
+                it_type = iteration.get("type")
+                it_input = iteration.get("input_tokens", 0)
+                it_output = iteration.get("output_tokens", 0)
+                it_model = iteration.get("model", advisor_model)
+            else:
+                it_type = getattr(iteration, "type", None)
+                it_input = getattr(iteration, "input_tokens", 0)
+                it_output = getattr(iteration, "output_tokens", 0)
+                it_model = getattr(iteration, "model", advisor_model)
+
+            if it_type == "advisor_message":
+                tracker.record(
+                    agent=f"{agent}_advisor",
+                    model=it_model,
+                    input_tokens=it_input,
+                    output_tokens=it_output,
+                )
+
+    return "\n".join(text_parts)
 
 
 def llm_call(client, tracker: TokenTracker | None, agent: str, **kwargs) -> str:

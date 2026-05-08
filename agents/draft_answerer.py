@@ -79,7 +79,7 @@ Please draft answers to these questions:
 
     return llm_call(
         client, tracker, "draft_answerer",
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         max_tokens=2000,
         temperature=0.3,
         system=DRAFT_SYSTEM_PROMPT,
