@@ -111,7 +111,7 @@ class AuditTrail:
         payload = json.dumps(details_dict, default=str)
 
         with get_connection(self.db_path) as conn:
-            if is_postgres():
+            if is_postgres(self.db_path):
                 cur = conn.execute(
                     """INSERT INTO audit_trail (run_id, event_type, timestamp, details_json)
                        VALUES (%s, %s, %s, %s) RETURNING id""",
@@ -142,7 +142,7 @@ class AuditTrail:
                 "details":     dict,  # deserialized from details_json
             }
         """
-        ph = "%s" if is_postgres() else "?"
+        ph = "%s" if is_postgres(self.db_path) else "?"
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"""SELECT id, run_id, event_type, timestamp, details_json
@@ -169,7 +169,7 @@ class AuditTrail:
         Each entry: {"run_id": str, "first_event": str, "last_event": str,
                      "event_count": int}
         """
-        ph = "%s" if is_postgres() else "?"
+        ph = "%s" if is_postgres(self.db_path) else "?"
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"""SELECT   run_id,

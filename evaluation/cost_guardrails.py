@@ -38,9 +38,9 @@ from evaluation.eval_db import get_connection, is_postgres, DEFAULT_DB_PATH
 from evaluation.token_tracker import TokenTracker, llm_call, _TOKEN_COSTS
 
 
-def _ph() -> str:
+def _ph(db_path=None) -> str:
     """Parameter placeholder for the active database backend."""
-    return "%s" if is_postgres() else "?"
+    return "%s" if is_postgres(db_path) else "?"
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ def get_daily_spend(db_path: Path | None = None) -> float:
         return 0.0
 
     today = date.today().isoformat()  # 'YYYY-MM-DD'
-    ph = _ph()
+    ph = _ph(db_path)
 
     with get_connection(db_path) as conn:
         rows = conn.execute(

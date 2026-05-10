@@ -19,14 +19,14 @@ from connectors.base import ConnectorInterface, FeatureRequest
 from evaluation.eval_db import get_connection, is_postgres
 
 
-def _ph() -> str:
+def _ph(db_path=None) -> str:
     """Parameter placeholder for the active database backend."""
-    return "%s" if is_postgres() else "?"
+    return "%s" if is_postgres(db_path) else "?"
 
 
-def _now_expr() -> str:
+def _now_expr(db_path=None) -> str:
     """SQL expression for the current timestamp."""
-    return "NOW()" if is_postgres() else "CURRENT_TIMESTAMP"
+    return "NOW()" if is_postgres(db_path) else "CURRENT_TIMESTAMP"
 
 
 def _row_to_request(row: dict) -> FeatureRequest:
@@ -78,7 +78,7 @@ class PostgresConnector(ConnectorInterface):
 
     def list_pending(self) -> list[FeatureRequest]:
         """Return all requests with status 'ready', oldest first."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"SELECT * FROM feature_requests WHERE status = {ph} ORDER BY created_at ASC",
@@ -88,7 +88,7 @@ class PostgresConnector(ConnectorInterface):
 
     def get_request(self, request_id: str) -> Optional[FeatureRequest]:
         """Fetch a single request by ID. Returns None if not found."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             row = conn.execute(
                 f"SELECT * FROM feature_requests WHERE id = {ph}",
@@ -98,7 +98,7 @@ class PostgresConnector(ConnectorInterface):
 
     def list_completed(self, limit: int = 20) -> list[FeatureRequest]:
         """Return completed requests, newest first."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"""SELECT * FROM feature_requests
@@ -116,7 +116,7 @@ class PostgresConnector(ConnectorInterface):
     def create_request(self, request: FeatureRequest) -> str:
         """Insert a new feature request. Returns the assigned ID."""
         assigned_id = request.id or str(uuid.uuid4())
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             conn.execute(
                 f"""INSERT INTO feature_requests
@@ -136,7 +136,7 @@ class PostgresConnector(ConnectorInterface):
 
     def update_status(self, request_id: str, status: str) -> None:
         """Update the status of a request."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             conn.execute(
                 f"UPDATE feature_requests SET status = {ph} WHERE id = {ph}",
@@ -152,8 +152,8 @@ class PostgresConnector(ConnectorInterface):
         run_id: str,
     ) -> None:
         """Write pipeline output back to the request and mark it complete."""
-        ph = _ph()
-        now_expr = _now_expr()
+        ph = _ph(self.db_path)
+        now_expr = _now_expr(self.db_path)
         with get_connection(self.db_path) as conn:
             conn.execute(
                 f"""UPDATE feature_requests

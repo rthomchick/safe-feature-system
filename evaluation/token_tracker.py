@@ -89,7 +89,7 @@ class TokenTracker:
 
     def flush_to_db(self, run_id: str, db_path: Path | None = None) -> None:
         """Persist all accumulated records to the token_usage table."""
-        ph = "%s" if is_postgres() else "?"
+        ph = "%s" if is_postgres(db_path) else "?"
         with get_connection(db_path) as conn:
             conn.executemany(
                 f"""INSERT INTO token_usage

@@ -12,9 +12,9 @@ from pathlib import Path
 from evaluation.eval_db import get_connection, is_postgres
 
 
-def _ph() -> str:
+def _ph(db_path=None) -> str:
     """Parameter placeholder for the active database backend."""
-    return "%s" if is_postgres() else "?"
+    return "%s" if is_postgres(db_path) else "?"
 
 
 class ResultStore:
@@ -39,25 +39,9 @@ class ResultStore:
         final_score: int | None = None,
         passed: bool | None = None,
     ) -> str:
-        """Persist one eval run. Returns the run_id (auto-generated if not supplied).
-
-        Args:
-            golden_set_id:    Matches the 'id' field in golden_set.GOLDEN_SET.
-            feature_type:     CAPABILITY, EXPERIENCE, or WEBPAGE.
-            scorecard:        The dict returned by review_feature_spec() — stored as JSON.
-            run_id:           Optional caller-supplied UUID; one is generated if omitted.
-            prompt_id:        FK to prompts.id for the reviewer prompt used.
-            router_prompt_id: FK to prompts.id for the router prompt used.
-            classified_as:    The type the router actually returned (for routing accuracy).
-            original_score:   Score before improvement pass.
-            final_score:      Score after improvement pass.
-            passed:           Whether the run met the golden-set's min_final_score.
-
-        Returns:
-            run_id string.
-        """
+        """Persist one eval run. Returns the run_id (auto-generated if not supplied)."""
         run_id = run_id or str(uuid.uuid4())
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             conn.execute(
                 f"""INSERT INTO eval_runs
@@ -91,7 +75,7 @@ class ResultStore:
         passed: bool | None = None,
     ) -> None:
         """Update fields on an existing eval_runs row."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         updates = []
         params: list = []
         if feature_type is not None:
@@ -124,7 +108,7 @@ class ResultStore:
 
     def get_run(self, run_id: str) -> dict | None:
         """Fetch a single run by id. scorecard is deserialized to dict."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             row = conn.execute(
                 f"SELECT * FROM eval_runs WHERE id = {ph}", (run_id,)
@@ -135,7 +119,7 @@ class ResultStore:
 
     def get_runs_for_golden(self, golden_set_id: str) -> list[dict]:
         """All runs for a golden-set entry, newest first."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"""SELECT * FROM eval_runs
@@ -146,10 +130,7 @@ class ResultStore:
             return [self._deserialize(dict(r)) for r in rows]
 
     def latest_scores(self, golden_set_id: str) -> dict | None:
-        """Convenience: most recent original/final scores for a golden-set entry.
-
-        Returns None if no runs exist yet.
-        """
+        """Convenience: most recent original/final scores for a golden-set entry."""
         runs = self.get_runs_for_golden(golden_set_id)
         if not runs:
             return None
@@ -168,7 +149,7 @@ class ResultStore:
 
     def get_token_usage(self, run_id: str) -> list[dict]:
         """All token_usage rows for a run, in call order."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"""SELECT * FROM token_usage

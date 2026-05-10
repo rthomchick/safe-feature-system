@@ -1,11 +1,6 @@
 # evaluation/prompt_registry.py
 from __future__ import annotations
 # PromptRegistry: content-addressed, versioned store for system prompts.
-#
-# Each unique system_prompt text gets a stable id (SHA-256 prefix) so the
-# same prompt content always maps to the same row — registering twice is safe.
-# Distinct content under the same name gets an incrementing version number,
-# making prompt evolution queryable.
 
 import hashlib
 from pathlib import Path
@@ -13,9 +8,9 @@ from pathlib import Path
 from evaluation.eval_db import get_connection, is_postgres
 
 
-def _ph() -> str:
+def _ph(db_path=None) -> str:
     """Parameter placeholder for the active database backend."""
-    return "%s" if is_postgres() else "?"
+    return "%s" if is_postgres(db_path) else "?"
 
 
 class PromptRegistry:
@@ -27,21 +22,9 @@ class PromptRegistry:
     # ------------------------------------------------------------------
 
     def register(self, name: str, agent: str, system_prompt: str) -> str:
-        """Register a system prompt. Returns its stable prompt_id.
-
-        Idempotent: registering the same text twice returns the same id
-        without creating a duplicate row or bumping the version counter.
-
-        Args:
-            name:          Human-readable label (e.g. "reviewer_v2").
-            agent:         Pipeline stage that owns the prompt (e.g. "reviewer").
-            system_prompt: The full system prompt text.
-
-        Returns:
-            16-char hex prompt_id derived from the prompt content.
-        """
+        """Register a system prompt. Returns its stable prompt_id."""
         prompt_id = self._content_id(system_prompt)
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             existing = conn.execute(
                 f"SELECT id FROM prompts WHERE id = {ph}", (prompt_id,)
@@ -67,7 +50,7 @@ class PromptRegistry:
 
     def get(self, prompt_id: str) -> dict | None:
         """Fetch a prompt by its content-addressed id."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             row = conn.execute(
                 f"SELECT * FROM prompts WHERE id = {ph}", (prompt_id,)
@@ -76,7 +59,7 @@ class PromptRegistry:
 
     def get_latest(self, name: str) -> dict | None:
         """Fetch the highest-version prompt registered under a given name."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             row = conn.execute(
                 f"SELECT * FROM prompts WHERE name = {ph} ORDER BY version DESC LIMIT 1",
@@ -86,7 +69,7 @@ class PromptRegistry:
 
     def list_versions(self, name: str) -> list[dict]:
         """Return all versions of a prompt, oldest first."""
-        ph = _ph()
+        ph = _ph(self.db_path)
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
                 f"SELECT * FROM prompts WHERE name = {ph} ORDER BY version ASC", (name,)

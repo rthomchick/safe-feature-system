@@ -91,9 +91,13 @@ def get_connection(db_path: Path | None = None):
     return conn
 
 
-def is_postgres() -> bool:
-    """True when the live connection is PostgreSQL."""
-    return bool(DATABASE_URL)
+def is_postgres(db_path=None) -> bool:
+    """True when the connection for db_path would use PostgreSQL.
+
+    Mirrors get_connection() logic exactly: PostgreSQL only when DATABASE_URL
+    is set AND db_path is None (i.e. no explicit SQLite path override).
+    """
+    return bool(DATABASE_URL) and db_path is None
 
 
 def init_db(db_path: Path | None = None) -> None:
@@ -277,7 +281,7 @@ def _init_sqlite(conn) -> None:
 
 def _migrate_columns(conn) -> None:
     """Add columns introduced after the initial schema — idempotent."""
-    if is_postgres():
+    if isinstance(conn, _PgConn):
         conn.execute("ALTER TABLE eval_runs ADD COLUMN IF NOT EXISTS router_prompt_id TEXT")
         conn.execute("ALTER TABLE eval_runs ADD COLUMN IF NOT EXISTS classified_as TEXT")
         conn.commit()
