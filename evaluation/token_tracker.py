@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from evaluation.eval_db import get_connection, DEFAULT_DB_PATH
+from evaluation.eval_db import get_connection, is_postgres, DEFAULT_DB_PATH
 
 # Pricing per million tokens (USD). Update when Anthropic changes prices.
 _TOKEN_COSTS: dict[str, dict[str, float]] = {
@@ -87,13 +87,14 @@ class TokenTracker:
             "by_agent": self.by_agent(),
         }
 
-    def flush_to_db(self, run_id: str, db_path: Path = DEFAULT_DB_PATH) -> None:
+    def flush_to_db(self, run_id: str, db_path: Path | None = None) -> None:
         """Persist all accumulated records to the token_usage table."""
+        ph = "%s" if is_postgres() else "?"
         with get_connection(db_path) as conn:
             conn.executemany(
-                """INSERT INTO token_usage
+                f"""INSERT INTO token_usage
                    (run_id, agent, model, input_tokens, output_tokens, call_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})""",
                 [
                     (run_id, r.agent, r.model, r.input_tokens, r.output_tokens, r.call_at)
                     for r in self._records

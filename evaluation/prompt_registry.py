@@ -10,11 +10,16 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from evaluation.eval_db import get_connection, DEFAULT_DB_PATH
+from evaluation.eval_db import get_connection, is_postgres
+
+
+def _ph() -> str:
+    """Parameter placeholder for the active database backend."""
+    return "%s" if is_postgres() else "?"
 
 
 class PromptRegistry:
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path
 
     # ------------------------------------------------------------------
@@ -36,21 +41,22 @@ class PromptRegistry:
             16-char hex prompt_id derived from the prompt content.
         """
         prompt_id = self._content_id(system_prompt)
+        ph = _ph()
         with get_connection(self.db_path) as conn:
             existing = conn.execute(
-                "SELECT id FROM prompts WHERE id = ?", (prompt_id,)
+                f"SELECT id FROM prompts WHERE id = {ph}", (prompt_id,)
             ).fetchone()
             if existing:
                 return prompt_id
 
             row = conn.execute(
-                "SELECT MAX(version) FROM prompts WHERE name = ?", (name,)
+                f"SELECT MAX(version) AS max_ver FROM prompts WHERE name = {ph}", (name,)
             ).fetchone()
-            version = (row[0] or 0) + 1
+            version = (row["max_ver"] or 0) + 1
 
             conn.execute(
-                """INSERT INTO prompts (id, name, version, agent, system_prompt)
-                   VALUES (?, ?, ?, ?, ?)""",
+                f"""INSERT INTO prompts (id, name, version, agent, system_prompt)
+                   VALUES ({ph}, {ph}, {ph}, {ph}, {ph})""",
                 (prompt_id, name, version, agent, system_prompt),
             )
         return prompt_id
@@ -61,26 +67,29 @@ class PromptRegistry:
 
     def get(self, prompt_id: str) -> dict | None:
         """Fetch a prompt by its content-addressed id."""
+        ph = _ph()
         with get_connection(self.db_path) as conn:
             row = conn.execute(
-                "SELECT * FROM prompts WHERE id = ?", (prompt_id,)
+                f"SELECT * FROM prompts WHERE id = {ph}", (prompt_id,)
             ).fetchone()
             return dict(row) if row else None
 
     def get_latest(self, name: str) -> dict | None:
         """Fetch the highest-version prompt registered under a given name."""
+        ph = _ph()
         with get_connection(self.db_path) as conn:
             row = conn.execute(
-                "SELECT * FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1",
+                f"SELECT * FROM prompts WHERE name = {ph} ORDER BY version DESC LIMIT 1",
                 (name,),
             ).fetchone()
             return dict(row) if row else None
 
     def list_versions(self, name: str) -> list[dict]:
         """Return all versions of a prompt, oldest first."""
+        ph = _ph()
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
-                "SELECT * FROM prompts WHERE name = ? ORDER BY version ASC", (name,)
+                f"SELECT * FROM prompts WHERE name = {ph} ORDER BY version ASC", (name,)
             ).fetchall()
             return [dict(r) for r in rows]
 

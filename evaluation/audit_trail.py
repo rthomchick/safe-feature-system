@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from evaluation.eval_db import get_connection, init_db, DEFAULT_DB_PATH
+from evaluation.eval_db import get_connection, init_db, is_postgres, DEFAULT_DB_PATH
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ class AuditTrail:
         db_path: Path to the eval SQLite DB. Defaults to evaluation/eval.db.
     """
 
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path
 
     # ------------------------------------------------------------------
@@ -111,12 +111,20 @@ class AuditTrail:
         payload = json.dumps(details_dict, default=str)
 
         with get_connection(self.db_path) as conn:
-            cur = conn.execute(
-                """INSERT INTO audit_trail (run_id, event_type, timestamp, details_json)
-                   VALUES (?, ?, ?, ?)""",
-                (run_id, event_type, ts, payload),
-            )
-            return cur.lastrowid  # type: ignore[return-value]
+            if is_postgres():
+                cur = conn.execute(
+                    """INSERT INTO audit_trail (run_id, event_type, timestamp, details_json)
+                       VALUES (%s, %s, %s, %s) RETURNING id""",
+                    (run_id, event_type, ts, payload),
+                )
+                return cur.fetchone()["id"]
+            else:
+                cur = conn.execute(
+                    """INSERT INTO audit_trail (run_id, event_type, timestamp, details_json)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, event_type, ts, payload),
+                )
+                return cur.lastrowid  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # Read
@@ -134,11 +142,12 @@ class AuditTrail:
                 "details":     dict,  # deserialized from details_json
             }
         """
+        ph = "%s" if is_postgres() else "?"
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
-                """SELECT id, run_id, event_type, timestamp, details_json
+                f"""SELECT id, run_id, event_type, timestamp, details_json
                    FROM   audit_trail
-                   WHERE  run_id = ?
+                   WHERE  run_id = {ph}
                    ORDER  BY timestamp ASC, id ASC""",
                 (run_id,),
             ).fetchall()
@@ -160,16 +169,17 @@ class AuditTrail:
         Each entry: {"run_id": str, "first_event": str, "last_event": str,
                      "event_count": int}
         """
+        ph = "%s" if is_postgres() else "?"
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
-                """SELECT   run_id,
+                f"""SELECT   run_id,
                             MIN(timestamp) AS first_event,
                             MAX(timestamp) AS last_event,
                             COUNT(*)       AS event_count
                    FROM     audit_trail
                    GROUP BY run_id
                    ORDER BY MAX(timestamp) DESC
-                   LIMIT    ?""",
+                   LIMIT    {ph}""",
                 (limit,),
             ).fetchall()
 
@@ -271,6 +281,7 @@ def _smoke_test() -> None:
         init_db(db_path)
 
         # We need a real eval_runs row for the FK constraint.
+        # The audit_trail smoke test always uses a temp SQLite path, so ? placeholders are safe.
         with get_connection(db_path) as conn:
             run_id = str(uuid.uuid4())
             conn.execute(

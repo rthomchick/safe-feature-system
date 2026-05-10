@@ -34,8 +34,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from evaluation.eval_db import get_connection, DEFAULT_DB_PATH
+from evaluation.eval_db import get_connection, is_postgres, DEFAULT_DB_PATH
 from evaluation.token_tracker import TokenTracker, llm_call, _TOKEN_COSTS
+
+
+def _ph() -> str:
+    """Parameter placeholder for the active database backend."""
+    return "%s" if is_postgres() else "?"
 
 
 # ---------------------------------------------------------------------------
@@ -143,25 +148,26 @@ def check_cost_budget(
 # get_daily_spend — DB query
 # ---------------------------------------------------------------------------
 
-def get_daily_spend(db_path: Path = DEFAULT_DB_PATH) -> float:
+def get_daily_spend(db_path: Path | None = None) -> float:
     """Sum estimated USD cost of all token_usage rows recorded today (UTC).
 
     Uses the same per-model pricing table as token_tracker.py.
     Returns 0.0 if the table is empty or the DB does not exist yet.
     """
-    if not db_path.exists():
+    if db_path is not None and not db_path.exists():
         return 0.0
 
     today = date.today().isoformat()  # 'YYYY-MM-DD'
+    ph = _ph()
 
     with get_connection(db_path) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT model,
                    SUM(input_tokens)  AS input_tokens,
                    SUM(output_tokens) AS output_tokens
             FROM   token_usage
-            WHERE  DATE(call_at) = ?
+            WHERE  DATE(call_at) = {ph}
             GROUP  BY model
             """,
             (today,),
@@ -200,7 +206,7 @@ class CostGuard:
 
     def __init__(
         self,
-        db_path: Path = DEFAULT_DB_PATH,
+        db_path: Path | None = None,
         limit_key: str = "per_run_max",
         daily_spend: float | None = None,
     ) -> None:

@@ -12,6 +12,7 @@ from agents.generator import generate_feature_spec
 from agents.reviewer import review_feature_spec, review_sections
 from agents.improver import improve_spec, polish_spec
 from prompts import capabilities, experiences, webpages
+from connectors.postgres import PostgresConnector
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -93,6 +94,8 @@ def init_state():
         "guard": None,
         "trail": None,
         "_tracker_flushed": False,
+        "connector_request_id": None,
+        "_connector_written": False,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -100,6 +103,8 @@ def init_state():
 
 init_state()
 init_db()
+if "connector" not in st.session_state:
+    st.session_state.connector = PostgresConnector()
 
 # ── Helper: reset to start ───────────────────────────────────────────────────
 def reset():
@@ -879,6 +884,21 @@ def stage_final():
             final_score=final_score_val,
             passed=final_score_val >= 90,
         )
+
+    # Write results back to connector if this run came from the request queue
+    connector_request_id = st.session_state.get("connector_request_id")
+    if connector_request_id and not st.session_state.get("_connector_written"):
+        connector = st.session_state.get("connector")
+        if connector and run_id:
+            cost = tracker.total_cost_usd() if tracker else 0.0
+            connector.write_result(
+                connector_request_id,
+                spec=final_spec,
+                score=final_score_val,
+                cost=cost,
+                run_id=run_id,
+            )
+            st.session_state._connector_written = True
 
     col1, col2 = st.columns(2)
     with col1:

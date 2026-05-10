@@ -9,16 +9,14 @@
 #   5. flush_to_db and round-trip query of token rows
 #
 # Run from the project root:
-#   python -m evaluation.smoke_test
+#   python -m evaluation.smoke_test            # SQLite (temp DB, default)
+#   DATABASE_URL=<url> python -m evaluation.smoke_test --postgres  # PostgreSQL
 
+import argparse
 import json
 import tempfile
+import uuid
 from pathlib import Path
-
-# Use an isolated temp DB so every run starts clean.
-_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_tmp.close()
-DB_PATH = Path(_tmp.name)
 
 from evaluation.eval_db import init_db
 from evaluation.prompt_registry import PromptRegistry
@@ -85,19 +83,19 @@ def _section(title: str) -> None:
 # Test functions
 # ---------------------------------------------------------------------------
 
-def test_db_init() -> None:
+def test_db_init(db_path: Path | None) -> None:
     _section("1. DB initialization")
-    init_db(DB_PATH)
-    _ok(f"DB created at {DB_PATH}")
+    init_db(db_path)
+    _ok(f"DB initialized (path={db_path or 'PostgreSQL'})")
 
     # Calling init_db a second time must not raise (CREATE IF NOT EXISTS)
-    init_db(DB_PATH)
+    init_db(db_path)
     _ok("Re-initialization is idempotent")
 
 
-def test_prompt_registry() -> None:
+def test_prompt_registry(db_path: Path | None) -> str:
     _section("2. PromptRegistry")
-    registry = PromptRegistry(DB_PATH)
+    registry = PromptRegistry(db_path)
 
     # Register v1
     pid1 = registry.register(
@@ -154,7 +152,7 @@ def test_prompt_registry() -> None:
     return pid1  # used in later tests
 
 
-def test_token_tracker() -> None:
+def test_token_tracker() -> TokenTracker:
     _section("3. TokenTracker")
     tracker = TokenTracker()
 
@@ -187,9 +185,11 @@ def test_token_tracker() -> None:
     return tracker  # used in the flush test
 
 
-def test_result_store_and_flush(prompt_id: str, tracker: TokenTracker) -> None:
+def test_result_store_and_flush(
+    db_path: Path | None, prompt_id: str, tracker: TokenTracker
+) -> None:
     _section("4. ResultStore + token flush")
-    store = ResultStore(DB_PATH)
+    store = ResultStore(db_path)
 
     # Save a run
     run_id = store.save_run(
@@ -204,7 +204,7 @@ def test_result_store_and_flush(prompt_id: str, tracker: TokenTracker) -> None:
     _ok(f"save_run → id: {run_id}")
 
     # Flush token records linked to this run
-    tracker.flush_to_db(run_id, DB_PATH)
+    tracker.flush_to_db(run_id, db_path)
     _ok("flush_to_db completed")
 
     # get_run round-trip
@@ -235,7 +235,7 @@ def test_result_store_and_flush(prompt_id: str, tracker: TokenTracker) -> None:
     # get_runs_for_golden
     runs = store.get_runs_for_golden("cap_001")
     assert len(runs) >= 1
-    assert runs[0]["id"] == run_id
+    assert any(r["id"] == run_id for r in runs)
     _ok(f"get_runs_for_golden('cap_001') → {len(runs)} run(s)")
 
     # latest_scores
@@ -251,25 +251,69 @@ def test_result_store_and_flush(prompt_id: str, tracker: TokenTracker) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PostgreSQL cleanup helper
+# ---------------------------------------------------------------------------
+
+def _cleanup_postgres(prompt_id: str) -> None:
+    """Remove test rows inserted into the shared PostgreSQL DB."""
+    from evaluation.eval_db import get_connection
+    with get_connection() as conn:
+        # token_usage rows are deleted via FK cascade if REFERENCES eval_runs ON DELETE CASCADE,
+        # but our schema doesn't have CASCADE, so delete in dependency order.
+        conn.execute(
+            "DELETE FROM token_usage WHERE run_id IN "
+            "(SELECT id FROM eval_runs WHERE golden_set_id = 'cap_001')"
+        )
+        conn.execute("DELETE FROM eval_runs WHERE golden_set_id = 'cap_001'")
+        conn.execute("DELETE FROM prompts WHERE name = 'reviewer'")
+    print("  [OK] PostgreSQL test rows cleaned up")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def run() -> None:
-    print("\n=== SAFe Eval Pipeline — Day 1 Smoke Test ===")
+def run(db_path: Path | None, postgres_mode: bool) -> None:
+    backend = "PostgreSQL" if postgres_mode else f"SQLite ({db_path})"
+    print(f"\n=== SAFe Eval Pipeline — Smoke Test ({backend}) ===")
 
     try:
-        test_db_init()
-        prompt_id = test_prompt_registry()
+        test_db_init(db_path)
+        prompt_id = test_prompt_registry(db_path)
         tracker   = test_token_tracker()
-        test_result_store_and_flush(prompt_id, tracker)
+        test_result_store_and_flush(db_path, prompt_id, tracker)
 
         print(f"\n{'=' * 55}")
         print("  ALL CHECKS PASSED")
         print(f"{'=' * 55}\n")
 
     finally:
-        DB_PATH.unlink(missing_ok=True)
+        if postgres_mode:
+            try:
+                _cleanup_postgres(prompt_id)  # type: ignore[possibly-undefined]
+            except Exception as exc:
+                print(f"  [WARN] PG cleanup failed: {exc}")
+        elif db_path is not None:
+            db_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(
+        description="Smoke test for the SAFe eval pipeline"
+    )
+    parser.add_argument(
+        "--postgres",
+        action="store_true",
+        help="Run against the live PostgreSQL DB (DATABASE_URL must be set)",
+    )
+    args = parser.parse_args()
+
+    if args.postgres:
+        import os
+        if not os.environ.get("DATABASE_URL"):
+            raise SystemExit("ERROR: DATABASE_URL must be set for --postgres mode")
+        run(db_path=None, postgres_mode=True)
+    else:
+        _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        _tmp.close()
+        run(db_path=Path(_tmp.name), postgres_mode=False)
