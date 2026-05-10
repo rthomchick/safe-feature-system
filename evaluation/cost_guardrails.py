@@ -44,11 +44,11 @@ from evaluation.token_tracker import TokenTracker, llm_call, _TOKEN_COSTS
 
 COST_LIMITS: dict[str, float | int] = {
     # Maximum USD cost for a single complete pipeline run
-    "per_run_max": 0.50,
+    "per_run_max": 1.50,
     # Maximum USD cost for a single improvement-pass sub-run
-    "per_improvement_max": 0.25,
+    "per_improvement_max": 0.50,
     # Maximum cumulative USD cost across all runs recorded today (UTC)
-    "daily_max": 5.00,
+    "daily_max": 10.00,
     # Maximum number of improvement iterations before the loop is force-stopped
     "improvement_iterations_max": 3,
 }

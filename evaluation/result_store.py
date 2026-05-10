@@ -74,6 +74,43 @@ class ResultStore:
             )
         return run_id
 
+    def update_run(
+        self,
+        run_id: str,
+        *,
+        feature_type: str | None = None,
+        scorecard: dict | None = None,
+        original_score: int | None = None,
+        final_score: int | None = None,
+        passed: bool | None = None,
+    ) -> None:
+        """Update fields on an existing eval_runs row."""
+        updates = []
+        params: list = []
+        if feature_type is not None:
+            updates.append("feature_type = ?")
+            params.append(feature_type)
+        if scorecard is not None:
+            updates.append("scorecard = ?")
+            params.append(json.dumps(scorecard))
+        if original_score is not None:
+            updates.append("original_score = ?")
+            params.append(original_score)
+        if final_score is not None:
+            updates.append("final_score = ?")
+            params.append(final_score)
+        if passed is not None:
+            updates.append("passed = ?")
+            params.append(int(passed))
+        if not updates:
+            return
+        params.append(run_id)
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                f"UPDATE eval_runs SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+
     # ------------------------------------------------------------------
     # Read — runs
     # ------------------------------------------------------------------
