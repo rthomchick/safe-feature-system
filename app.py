@@ -1,11 +1,18 @@
 # app.py
+import uuid
 import streamlit as st
 from agents.router import classify_feature
+from evaluation.eval_db import init_db
+from evaluation.token_tracker import TokenTracker
+from evaluation.audit_trail import AuditTrail, ROUTE, DRAFT, GENERATE, REVIEW, IMPROVE, COST_CHECK
+from evaluation.cost_guardrails import CostGuard, CostLimitExceeded
+from evaluation.result_store import ResultStore
 from agents.draft_answerer import draft_section_answers
 from agents.generator import generate_feature_spec
 from agents.reviewer import review_feature_spec, review_sections
 from agents.improver import improve_spec, polish_spec
 from prompts import capabilities, experiences, webpages
+from connectors.postgres import PostgresConnector
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -82,18 +89,48 @@ def init_state():
         "improved_spec": None,
         "improved_scorecard": None,
         "additional_context": {},
+        "run_id": None,
+        "tracker": None,
+        "guard": None,
+        "trail": None,
+        "_tracker_flushed": False,
+        "connector_request_id": None,
+        "_connector_written": False,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
 
 init_state()
+init_db()
+if "connector" not in st.session_state:
+    st.session_state.connector = PostgresConnector()
 
 # ── Helper: reset to start ───────────────────────────────────────────────────
 def reset():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
+
+
+def init_pipeline_run():
+    run_id = str(uuid.uuid4())
+    st.session_state.run_id = run_id
+    st.session_state.tracker = TokenTracker()
+    st.session_state.trail = AuditTrail()
+    st.session_state.guard = CostGuard()
+    st.session_state._tracker_flushed = False
+    store = ResultStore()
+    store.save_run(
+        golden_set_id="production",
+        feature_type="UNKNOWN",
+        scorecard={},
+        run_id=run_id,
+        original_score=0,
+        final_score=0,
+        passed=None,
+    )
+
 
 # ── Progress indicator ───────────────────────────────────────────────────────
 STAGES = ["input", "draft", "generate", "review", "final"]
@@ -145,8 +182,17 @@ def stage_input():
     )
 
     if st.button("→ Start", type="primary", disabled=not description.strip()):
+        init_pipeline_run()
         with st.spinner("Classifying feature type..."):
-            feature_type = classify_feature(description)
+            feature_type = classify_feature(description, tracker=st.session_state.tracker)
+
+        trail = st.session_state.trail
+        run_id = st.session_state.run_id
+        if trail and run_id:
+            trail.log_event(run_id, ROUTE, {
+                "input_description": description[:200],
+                "classified_as": feature_type,
+            })
 
         st.session_state.feature_type = feature_type
         st.session_state.notes = notes
@@ -197,7 +243,8 @@ def stage_draft():
                 notes=st.session_state.notes,
                 feature_type=feature_type,
                 section_name=section_name,
-                questions=questions
+                questions=questions,
+                tracker=st.session_state.tracker
             )
         progress_bar.empty()
         st.rerun()
@@ -297,12 +344,33 @@ def stage_generate():
     feature_type = st.session_state.feature_type
     module = PROMPT_MODULES[feature_type]
 
+    guard = st.session_state.guard
+    tracker = st.session_state.tracker
+    if guard and tracker:
+        guard.sync_from_tracker(tracker)
+        try:
+            guard.check_before_call("generator")
+        except CostLimitExceeded as e:
+            st.error(f"⚠️ Cost limit reached: {e}")
+            st.info(f"Run cost so far: ${guard.run_cost:.4f}")
+            st.stop()
+
     with st.spinner("Generating SAFe Feature spec..."):
         spec = generate_feature_spec(
             feature_type=feature_type,
             preamble=module.PREAMBLE,
-            section_answers=st.session_state.section_answers
+            section_answers=st.session_state.section_answers,
+            tracker=st.session_state.tracker
         )
+
+    trail = st.session_state.trail
+    run_id = st.session_state.run_id
+    if trail and run_id:
+        trail.log_event(run_id, GENERATE, {
+            "feature_type": st.session_state.feature_type,
+            "section_count": len(st.session_state.section_answers),
+            "output_length_chars": len(spec),
+        })
 
     st.session_state.spec = spec
     st.session_state.stage = "review"
@@ -318,12 +386,37 @@ def stage_review():
 
     # Review if not already done
     if st.session_state.scorecard is None:
+        guard = st.session_state.guard
+        tracker = st.session_state.tracker
+        if guard and tracker:
+            guard.sync_from_tracker(tracker)
+            try:
+                guard.check_before_call("reviewer")
+            except CostLimitExceeded as e:
+                st.error(f"⚠️ Cost limit reached: {e}")
+                st.info(f"Run cost so far: ${guard.run_cost:.4f}")
+                st.stop()
+
         with st.spinner("Scoring spec against 100-point rubric..."):
             scorecard = review_feature_spec(
                 st.session_state.spec,
-                feature_type=st.session_state.feature_type
+                feature_type=st.session_state.feature_type,
+                use_advisor=st.session_state.get("use_advisor", False),
+                tracker=st.session_state.tracker
             )
         st.session_state.scorecard = scorecard
+
+        trail = st.session_state.trail
+        run_id = st.session_state.run_id
+        if trail and run_id:
+            weak = [name for name, data in scorecard.get("sections", {}).items()
+                    if data["max_points"] > 0 and data["score"] / data["max_points"] < 0.75]
+            trail.log_event(run_id, REVIEW, {
+                "total_score": scorecard.get("total_score", 0),
+                "max_score": 100,
+                "weak_sections": weak,
+                "passed": scorecard.get("total_score", 0) >= 90,
+            })
 
     scorecard = st.session_state.scorecard
 
@@ -514,12 +607,28 @@ def stage_improve():
         and data["score"] / data["max_points"] < 0.75
     }
 
+    trail = st.session_state.trail
+    run_id = st.session_state.run_id
+    guard = st.session_state.guard
+    tracker = st.session_state.tracker
+
     # ── Pass 1: improve all originally-weak sections ─────────────────────
+    if guard and tracker:
+        guard.sync_from_tracker(tracker)
+        try:
+            guard.check_before_call("improver")
+        except CostLimitExceeded as e:
+            st.error(f"⚠️ Cost limit reached: {e}")
+            st.info(f"Run cost so far: ${guard.run_cost:.4f}")
+            st.stop()
+
     with st.spinner("Improving weak sections (pass 1 of 2)..."):
         improved = improve_spec(
             st.session_state.spec,
             original_scorecard,
-            additional_context
+            additional_context,
+            use_advisor=st.session_state.get("use_advisor", False),
+            tracker=st.session_state.tracker
         )
 
     # Determine which sections were actually changed by the Improver
@@ -534,7 +643,9 @@ def stage_improve():
         if changed_sections:
             partial_scorecard = review_sections(
                 improved, list(changed_sections),
-                feature_type=st.session_state.feature_type
+                feature_type=st.session_state.feature_type,
+                use_advisor=st.session_state.get("use_advisor", False),
+                tracker=st.session_state.tracker
             )
         else:
             partial_scorecard = {"sections": {}}
@@ -543,6 +654,14 @@ def stage_improve():
     improved_scorecard = _merge_scorecards(
         original_scorecard, partial_scorecard, changed_sections
     )
+
+    if trail and run_id:
+        trail.log_event(run_id, IMPROVE, {
+            "iteration": 1,
+            "sections_targeted": list(changed_sections),
+            "score_before": original_scorecard.get("total_score", 0),
+            "score_after": improved_scorecard.get("total_score", 0),
+        })
 
     # ── Pass 2: strictly guarded ─────────────────────────────────────────
     if "parse_error" not in improved_scorecard:
@@ -576,6 +695,15 @@ def stage_improve():
                 }
             }
 
+            if guard and tracker:
+                guard.sync_from_tracker(tracker)
+                try:
+                    guard.check_before_call("improver")
+                except CostLimitExceeded as e:
+                    st.error(f"⚠️ Cost limit reached: {e}")
+                    st.info(f"Run cost so far: ${guard.run_cost:.4f}")
+                    st.stop()
+
             with st.spinner(
                 f"Running second pass on {len(still_weak_and_originally_weak)} "
                 f"remaining weak section(s)..."
@@ -583,7 +711,9 @@ def stage_improve():
                 improved = improve_spec(
                     improved,
                     filtered_scorecard,
-                    additional_context
+                    additional_context,
+                    use_advisor=st.session_state.get("use_advisor", False),
+                    tracker=st.session_state.tracker
                 )
 
             changed_pass2 = set(improve_spec.last_debug.get("weak_rubric_sections", []))
@@ -592,7 +722,9 @@ def stage_improve():
                 if changed_pass2:
                     partial_scorecard_2 = review_sections(
                         improved, list(changed_pass2),
-                        feature_type=st.session_state.feature_type
+                        feature_type=st.session_state.feature_type,
+                        use_advisor=st.session_state.get("use_advisor", False),
+                        tracker=st.session_state.tracker
                     )
                 else:
                     partial_scorecard_2 = {"sections": {}}
@@ -600,6 +732,14 @@ def stage_improve():
             improved_scorecard = _merge_scorecards(
                 improved_scorecard, partial_scorecard_2, changed_pass2
             )
+
+            if trail and run_id:
+                trail.log_event(run_id, IMPROVE, {
+                    "iteration": 2,
+                    "sections_targeted": list(changed_pass2),
+                    "score_before": first_score,
+                    "score_after": improved_scorecard.get("total_score", 0),
+                })
 
     # ── Tier 2: Polish pass (auto-trigger if score is 80-89) ────────────────
     # Sections scoring 75-89% get light-touch append-only edits.
@@ -610,7 +750,9 @@ def stage_improve():
             polished = polish_spec(
                 improved,
                 improved_scorecard,
-                additional_context
+                additional_context,
+                use_advisor=st.session_state.get("use_advisor", False),
+                tracker=st.session_state.tracker
             )
 
         polish_changed = set(polish_spec.last_debug.get("polish_candidates", []))
@@ -619,7 +761,9 @@ def stage_improve():
             with st.spinner("Re-scoring polished sections..."):
                 partial_polish = review_sections(
                     polished, list(polish_changed),
-                    feature_type=st.session_state.feature_type
+                    feature_type=st.session_state.feature_type,
+                    use_advisor=st.session_state.get("use_advisor", False),
+                    tracker=st.session_state.tracker
                 )
 
             improved_scorecard = _merge_scorecards(
@@ -694,6 +838,68 @@ def stage_final():
     st.markdown(final_spec)
 
     st.divider()
+
+    tracker = st.session_state.get("tracker")
+    trail = st.session_state.get("trail")
+    run_id = st.session_state.get("run_id")
+
+    with st.expander("🔍 Run Details", expanded=False):
+        if tracker:
+            summary = tracker.summary()
+            st.metric("API Cost", f"${summary['cost_usd']:.4f}")
+            st.caption(
+                f"Total tokens: {summary['input']:,} in / {summary['output']:,} out "
+                f"across {summary['calls']} calls"
+            )
+            for agent, data in summary.get("by_agent", {}).items():
+                st.caption(
+                    f"  {agent}: {data['input']:,} in / {data['output']:,} out "
+                    f"({data['calls']} calls)"
+                )
+
+        if trail and run_id:
+            events = trail.get_trace(run_id)
+            if events:
+                st.caption(f"Audit trail: {len(events)} events")
+                for ev in events:
+                    st.caption(f"  {ev['timestamp']} — {ev['event_type']}")
+
+    if tracker and run_id and not st.session_state.get("_tracker_flushed"):
+        tracker.flush_to_db(run_id)
+        st.session_state._tracker_flushed = True
+
+    if run_id:
+        store = ResultStore()
+        if improved_scorecard and "parse_error" not in improved_scorecard:
+            final_score_val = improved_scorecard.get("total_score", 0)
+            final_scorecard = improved_scorecard
+        else:
+            final_score_val = original_score
+            final_scorecard = st.session_state.scorecard or {}
+        store.update_run(
+            run_id,
+            feature_type=st.session_state.feature_type or "UNKNOWN",
+            scorecard=final_scorecard,
+            original_score=original_score,
+            final_score=final_score_val,
+            passed=final_score_val >= 90,
+        )
+
+    # Write results back to connector if this run came from the request queue
+    connector_request_id = st.session_state.get("connector_request_id")
+    if connector_request_id and not st.session_state.get("_connector_written"):
+        connector = st.session_state.get("connector")
+        if connector and run_id:
+            cost = tracker.total_cost_usd() if tracker else 0.0
+            connector.write_result(
+                connector_request_id,
+                spec=final_spec,
+                score=final_score_val,
+                cost=cost,
+                run_id=run_id,
+            )
+            st.session_state._connector_written = True
+
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -707,6 +913,12 @@ def stage_final():
         if st.button("↺ Build Another Spec"):
             reset()
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ════════════════════════════════════════════════════════════════════════════
+use_advisor = st.sidebar.checkbox("🧠 Use Opus Advisor (Reviewer + Improver)", value=False)
+st.session_state["use_advisor"] = use_advisor
 
 # ════════════════════════════════════════════════════════════════════════════
 # STAGE ROUTER
