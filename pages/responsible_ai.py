@@ -353,7 +353,7 @@ st.caption(
 # Pull grounding events from the audit_trail if any exist
 @st.cache_data(ttl=30)
 def _load_grounding_events() -> list[dict]:
-    with get_connection(DEFAULT_DB_PATH) as conn:
+    with get_connection() as conn:
         # Check if audit_trail has any GROUND_CHECK events
         rows = conn.execute(
             """
@@ -464,7 +464,7 @@ st.header("4 · Cost Governance")
 st.caption("Token spend tracking, guardrail limits, and infrastructure audit coverage.")
 
 # ── Daily spend + guardrail metrics ──────────────────────────────────────
-daily_spend  = get_daily_spend(DEFAULT_DB_PATH)
+daily_spend  = get_daily_spend()
 per_run_max  = float(COST_LIMITS["per_run_max"])
 daily_max    = float(COST_LIMITS["daily_max"])
 daily_pct    = daily_spend / daily_max * 100 if daily_max > 0 else 0
