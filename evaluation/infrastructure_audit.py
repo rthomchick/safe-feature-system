@@ -357,7 +357,8 @@ def _gap_analysis(conn) -> dict[str, Any]:
     def _has_data(table: str) -> bool:
         if table not in tables:
             return False
-        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] > 0
+        row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+        return (row["n"] if hasattr(row, "keys") else row[0]) > 0
 
     # Simple heuristics to classify each check
     def _classify(check: str, signal: str) -> str:
