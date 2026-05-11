@@ -24,7 +24,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from evaluation.eval_db import get_connection, init_db, DEFAULT_DB_PATH
+from evaluation.eval_db import get_connection, init_db, is_postgres, DEFAULT_DB_PATH
 from evaluation.responsible_ai_checklist import CHECKLIST, Status
 
 
@@ -325,17 +325,34 @@ def _gap_analysis(conn) -> dict[str, Any]:
       partial    — infra exists but not fully wired up
       gap        — no DB coverage; implementation needed
     """
-    # Snapshot the DB schema for quick presence checks
-    tables = {
-        r[0]
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    columns: dict[str, set[str]] = {}
-    for table in tables:
-        cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
-        columns[table] = {c["name"] for c in cols}
+    # Snapshot the DB schema for quick presence checks (backend-aware)
+    if is_postgres():
+        tables = {
+            r["table_name"]
+            for r in conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public'"
+            ).fetchall()
+        }
+        columns: dict[str, set[str]] = {}
+        for table in tables:
+            cols = conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = %s",
+                (table,),
+            ).fetchall()
+            columns[table] = {c["column_name"] for c in cols}
+    else:
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        columns = {}
+        for table in tables:
+            cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            columns[table] = {c["name"] for c in cols}
 
     def _has_data(table: str) -> bool:
         if table not in tables:
