@@ -47,7 +47,7 @@ _MIN_BOOST_DELTA = 5.0
 # ---------------------------------------------------------------------------
 
 def get_scores_by_category(
-    db_path: Path = DEFAULT_DB_PATH,
+    db_path: Path | None = None,
 ) -> dict[str, list[float]]:
     """Query eval_runs and group final scores by feature type.
 
@@ -223,7 +223,7 @@ def detect_bias(
 # section_level_bias
 # ---------------------------------------------------------------------------
 
-def section_level_bias(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Any]:
+def section_level_bias(db_path: Path | None = None) -> dict[str, Any]:
     """Compare per-section means across feature types.
 
     Pulls all scorecards from the DB, computes mean section score for each
@@ -332,7 +332,7 @@ def section_level_bias(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Any]:
 # boost_effectiveness
 # ---------------------------------------------------------------------------
 
-def boost_effectiveness(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Any]:
+def boost_effectiveness(db_path: Path | None = None) -> dict[str, Any]:
     """Compare bare vs boosted scores per feature type.
 
     Identifies bare/boosted by _bare / _boosted suffix in golden_set_id.
@@ -434,7 +434,7 @@ def boost_effectiveness(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def run_bias_report(
-    db_path: Path = DEFAULT_DB_PATH,
+    db_path: Path | None = None,
     threshold: float = _DEFAULT_BIAS_THRESHOLD,
 ) -> dict[str, Any]:
     """Run all three analyses and return a combined report dict.
@@ -442,7 +442,7 @@ def run_bias_report(
     Safe to call against an empty or missing DB — each sub-report degrades
     gracefully to empty/zero-state results.
     """
-    if not db_path.exists():
+    if db_path is not None and not db_path.exists():
         return {
             "db_path":     str(db_path),
             "error":       f"DB not found: {db_path}",

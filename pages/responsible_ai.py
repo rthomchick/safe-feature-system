@@ -57,7 +57,7 @@ init_db()
 
 @st.cache_data(ttl=30)
 def _load_runs() -> pd.DataFrame:
-    with get_connection(DEFAULT_DB_PATH) as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT id, golden_set_id, feature_type, run_at,
@@ -80,7 +80,7 @@ def _load_runs() -> pd.DataFrame:
 def _load_token_costs() -> pd.DataFrame:
     """One row per (run_id, agent): cost_usd, call_at date."""
     from evaluation.token_tracker import _TOKEN_COSTS
-    with get_connection(DEFAULT_DB_PATH) as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT run_id, agent, model,
@@ -107,12 +107,12 @@ def _load_token_costs() -> pd.DataFrame:
 
 @st.cache_data(ttl=30)
 def _load_bias_report() -> dict:
-    return run_bias_report(DEFAULT_DB_PATH, threshold=_DEFAULT_BIAS_THRESHOLD)
+    return run_bias_report(threshold=_DEFAULT_BIAS_THRESHOLD)
 
 
 @st.cache_data(ttl=30)
 def _load_audit() -> dict:
-    return run_audit(DEFAULT_DB_PATH)
+    return run_audit()
 
 
 # ---------------------------------------------------------------------------

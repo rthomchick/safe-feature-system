@@ -416,7 +416,7 @@ def _gap_analysis(conn) -> dict[str, Any]:
 # Top-level report assembler
 # ---------------------------------------------------------------------------
 
-def run_audit(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Any]:
+def run_audit(db_path: Path | None = None) -> dict[str, Any]:
     """Run all five audit sections and return a single structured dict.
 
     Safe to call when the DB is empty (sections return zero-state dicts).
