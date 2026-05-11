@@ -171,6 +171,12 @@ Return your scores as JSON only."""
             raw = raw[4:]
         raw = raw.strip()
 
+    # Extract JSON object from surrounding text (handles advisor preamble)
+    json_start = raw.find('{')
+    json_end = raw.rfind('}')
+    if json_start != -1 and json_end != -1 and json_start < json_end:
+        raw = raw[json_start:json_end+1]
+
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
@@ -267,6 +273,12 @@ Return your scores as JSON only. Include only the sections listed above."""
         if raw.startswith("json"):
             raw = raw[4:]
         raw = raw.strip()
+
+    # Extract JSON object from surrounding text (handles advisor preamble)
+    json_start = raw.find('{')
+    json_end = raw.rfind('}')
+    if json_start != -1 and json_end != -1 and json_start < json_end:
+        raw = raw[json_start:json_end+1]
 
     try:
         return json.loads(raw)
