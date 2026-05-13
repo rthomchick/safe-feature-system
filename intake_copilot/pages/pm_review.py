@@ -9,49 +9,123 @@ Can also be run as a standalone Streamlit page:
 """
 
 import streamlit as st
+from psycopg2.extras import Json
 
-from intake_copilot.agent import IntakeCopilot
 from intake_copilot.models import IntakeRecord
 from intake_copilot.pm_review import PMReviewRecord
 from intake_copilot.pipeline_bridge import run_pipeline_from_intake
+from intake_copilot.persistence import (
+    get_pending_requests,
+    get_request,
+    update_request,
+)
 
 
-def render() -> None:
+# ---------------------------------------------------------------------------
+# Queue view
+# ---------------------------------------------------------------------------
+
+def _render_queue() -> None:
     st.title("PM Review")
+    st.caption("Submitted intake requests awaiting review.")
 
-    # ── Guard: must have a completed copilot session ──────────────────────────
-    copilot: IntakeCopilot | None = st.session_state.get("copilot")
+    try:
+        requests = get_pending_requests()
+    except Exception as e:
+        st.error(f"Could not load requests from database: {e}")
+        return
 
-    if copilot is None or copilot._manager.state.value != "confirmed":
-        st.warning(
-            "No completed intake session found. "
-            "Complete a stakeholder intake first."
-        )
-        if st.button("Go to Stakeholder Intake"):
-            # Works when served from the main app (pages/stakeholder_intake.py)
-            # and from intake_app.py (st.navigation handles routing).
-            try:
-                st.switch_page("pages/stakeholder_intake.py")
-            except Exception:
-                st.info("Navigate to 'Stakeholder Intake' in the sidebar.")
-        st.stop()
+    if not requests:
+        st.info("No pending requests. Check back after stakeholders submit new intakes.")
+        return
 
-    # ── Build or retrieve PMReviewRecord ──────────────────────────────────────
-    if "pm_review_record" not in st.session_state:
-        record: IntakeRecord = copilot.get_intake_record()
-        recommendation = copilot.get_advisor_recommendation()
-        st.session_state["pm_review_record"] = PMReviewRecord(
-            intake_record=record,
-            recommendation=recommendation,
-            conversation_transcript=copilot._record.conversation_history,
-            stakeholder_raw_input=copilot._record.stakeholder_input_raw,
-            pm_field_edits={},
-        )
+    _status_color = {
+        "submitted": "blue",
+        "in_review": "orange",
+    }
 
-    pm: PMReviewRecord = st.session_state["pm_review_record"]
+    for req in requests:
+        req_id = str(req["id"])
+        short_id = req_id[:8]
+        name = req.get("feature_name") or "Untitled Request"
+        status = req.get("status", "submitted")
+        score = req.get("readiness_score")
+        type_guess = req.get("feature_type_guess") or "—"
+        confidence = req.get("feature_type_confidence") or 0.0
+        created = req.get("created_at")
+        created_str = created.strftime("%Y-%m-%d %H:%M") if created else "—"
+
+        color = _status_color.get(status, "grey")
+
+        with st.container(border=True):
+            col_info, col_btn = st.columns([5, 1])
+            with col_info:
+                st.markdown(f"**{name}** · `{short_id}`")
+                st.caption(
+                    f":{color}[{status}] · Score: {score} · "
+                    f"Type: {type_guess} ({confidence:.0%}) · {created_str}"
+                )
+            with col_btn:
+                if st.button("Review", key=f"review_{req_id}"):
+                    st.session_state["selected_request_id"] = req_id
+                    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Detail view helpers
+# ---------------------------------------------------------------------------
+
+def _load_pm_record(request_id: str) -> PMReviewRecord | None:
+    """Load DB row and reconstruct a PMReviewRecord, cached in session state."""
+    cache_key = f"pm_record_{request_id}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    row = get_request(request_id)
+    if not row:
+        return None
+
+    intake_record = IntakeRecord.from_dict(row["intake_record"])
+    recommendation = row.get("copilot_recommendation") or {}
+    transcript = row.get("conversation_history") or []
+
+    pm = PMReviewRecord(
+        intake_record=intake_record,
+        recommendation=recommendation,
+        conversation_transcript=transcript,
+        stakeholder_raw_input=intake_record.stakeholder_input_raw,
+        pm_feature_type=row.get("pm_feature_type"),
+        pm_boost_inputs=row.get("pm_boost_inputs"),
+        pm_decision=row.get("pm_decision"),
+        pm_rejection_reason=row.get("pm_rejection_reason"),
+        pm_field_edits=row.get("pm_field_edits") or {},
+    )
+    st.session_state[cache_key] = pm
+    return pm
+
+
+def _invalidate_pm_cache(request_id: str) -> None:
+    st.session_state.pop(f"pm_record_{request_id}", None)
+
+
+# ---------------------------------------------------------------------------
+# Detail view
+# ---------------------------------------------------------------------------
+
+def _render_detail(request_id: str) -> None:
+    if st.button("← Back to queue"):
+        del st.session_state["selected_request_id"]
+        st.rerun()
+
+    pm = _load_pm_record(request_id)
+    if pm is None:
+        st.error("Request not found.")
+        return
+
     record = pm.intake_record
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    st.title("PM Review")
+
     feature_name = record.feature_name.value or "Untitled Feature"
     action = pm.recommendation.get("action", "")
 
@@ -67,7 +141,7 @@ def render() -> None:
         "needs_more_input": "Needs more input",
     }.get(action, action)
 
-    st.subheader(feature_name)
+    st.subheader(f"{feature_name} · `{request_id[:8]}`")
     st.markdown(f"**Copilot recommendation:** :{_badge_color}[{_badge_label}]")
     st.divider()
 
@@ -75,11 +149,7 @@ def render() -> None:
     st.header("1. Intake Summary")
 
     _TIER_LABELS = {"core": "Core", "context": "Context", "detail": "Detail"}
-    _STATUS_ICONS = {
-        "populated": "✓",
-        "unknown": "?",
-        "unasked": "—",
-    }
+    _STATUS_ICONS = {"populated": "✓", "unknown": "?", "unasked": "—"}
 
     _ALL_FIELDS = [
         ("feature_name", "Feature Name"),
@@ -114,7 +184,6 @@ def render() -> None:
 
         with col2:
             edit_key = f"edit_toggle_{field_name}"
-
             if edit_key not in st.session_state:
                 st.session_state[edit_key] = False
 
@@ -130,7 +199,9 @@ def render() -> None:
                 with col_save:
                     if st.button("Save", key=f"save_{field_name}"):
                         pm.edit_field(field_name, new_val)
-                        st.session_state["pm_review_record"] = pm
+                        new_edits = dict(pm.pm_field_edits or {})
+                        update_request(request_id, pm_field_edits=Json(new_edits))
+                        _invalidate_pm_cache(request_id)
                         st.session_state[edit_key] = False
                         st.rerun()
                 with col_cancel:
@@ -169,7 +240,8 @@ def render() -> None:
 
     if st.button("Confirm Feature Type"):
         pm.set_feature_type(selected_type)
-        st.session_state["pm_review_record"] = pm
+        update_request(request_id, pm_feature_type=selected_type, status="in_review")
+        _invalidate_pm_cache(request_id)
         st.success(f"Feature type confirmed: {selected_type}")
 
     if pm.pm_feature_type:
@@ -218,7 +290,8 @@ def render() -> None:
 
     if st.button("Save Boost Inputs"):
         pm.add_boost_inputs(boost_text)
-        st.session_state["pm_review_record"] = pm
+        update_request(request_id, pm_boost_inputs=pm.pm_boost_inputs)
+        _invalidate_pm_cache(request_id)
         st.success("Boost inputs saved.")
 
     st.divider()
@@ -251,9 +324,16 @@ def render() -> None:
         ):
             try:
                 pm.accept()
-                st.session_state["pm_review_record"] = pm
-                st.session_state["generator_input"] = pm.to_generator_input()
-                st.session_state["pipeline_result"] = None
+                gen_input = pm.to_generator_input()
+                update_request(
+                    request_id,
+                    pm_decision="accept",
+                    status="accepted",
+                    generator_input=Json(gen_input),
+                )
+                _invalidate_pm_cache(request_id)
+                st.session_state[f"generator_input_{request_id}"] = gen_input
+                st.session_state[f"pipeline_result_{request_id}"] = None
             except Exception as e:
                 st.error(str(e))
 
@@ -266,15 +346,31 @@ def render() -> None:
             if st.button("Confirm Rejection", type="secondary"):
                 if rejection_reason.strip():
                     pm.reject(rejection_reason)
-                    st.session_state["pm_review_record"] = pm
+                    update_request(
+                        request_id,
+                        pm_decision="reject",
+                        pm_rejection_reason=rejection_reason.strip(),
+                        status="rejected",
+                    )
+                    _invalidate_pm_cache(request_id)
                     st.warning("Intake rejected.")
                 else:
                     st.error("Please provide a rejection reason.")
 
-    # ── Generator Input Preview + Pipeline Trigger ────────────────────────────
-    gen_input: dict | None = st.session_state.get("generator_input")
+    # Reload pm after possible accept/reject writes
+    pm = _load_pm_record(request_id)
 
-    if gen_input is not None and pm.pm_decision == "accept":
+    # ── Generator Input Preview + Pipeline Trigger ────────────────────────────
+    gen_input: dict | None = st.session_state.get(f"generator_input_{request_id}")
+
+    if gen_input is None and pm and pm.pm_decision == "accept":
+        # Reload from DB (e.g. after page refresh)
+        row = get_request(request_id)
+        if row and row.get("generator_input"):
+            gen_input = row["generator_input"]
+            st.session_state[f"generator_input_{request_id}"] = gen_input
+
+    if gen_input is not None and pm and pm.pm_decision == "accept":
         st.divider()
         st.subheader("Generator Input")
 
@@ -298,11 +394,18 @@ def render() -> None:
         if st.button("Run Pipeline", type="primary"):
             with st.spinner("Running Generator → Reviewer → Improver…"):
                 result = run_pipeline_from_intake(gen_input, use_advisor=use_advisor)
-            st.session_state["pipeline_result"] = result
+            st.session_state[f"pipeline_result_{request_id}"] = result
+            update_request(request_id, pipeline_result=Json(result))
             st.rerun()
 
     # ── Pipeline Result ───────────────────────────────────────────────────────
-    pipeline_result = st.session_state.get("pipeline_result")
+    pipeline_result = st.session_state.get(f"pipeline_result_{request_id}")
+
+    if pipeline_result is None:
+        row = get_request(request_id)
+        if row and row.get("pipeline_result"):
+            pipeline_result = row["pipeline_result"]
+
     if pipeline_result:
         st.divider()
         if pipeline_result.get("error"):
@@ -359,6 +462,18 @@ def render() -> None:
                     f"{summary.get('output', 0):,} out "
                     f"across {summary.get('calls', 0)} calls"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def render() -> None:
+    request_id = st.session_state.get("selected_request_id")
+    if request_id:
+        _render_detail(request_id)
+    else:
+        _render_queue()
 
 
 # Allow running as a standalone Streamlit page:

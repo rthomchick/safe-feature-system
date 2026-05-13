@@ -12,6 +12,7 @@ import streamlit as st
 
 from intake_copilot.agent import IntakeCopilot
 from intake_copilot.models import ConversationState
+from intake_copilot.persistence import save_intake_request
 
 
 def render() -> None:
@@ -27,6 +28,8 @@ def render() -> None:
         st.session_state["intake_done"] = False
     if "greeting_sent" not in st.session_state:
         st.session_state["greeting_sent"] = False
+    if "intake_request_id" not in st.session_state:
+        st.session_state["intake_request_id"] = None
 
     copilot: IntakeCopilot = st.session_state["copilot"]
 
@@ -43,8 +46,10 @@ def render() -> None:
 
     # ── Completion state ──────────────────────────────────────────────────────
     if st.session_state["intake_done"]:
+        ref = st.session_state.get("intake_request_id")
+        short_ref = ref[:8] if ref else "pending"
         st.success(
-            "Your request has been submitted. "
+            f"Your request has been submitted — Reference: **{short_ref}**. "
             "A product manager will review it shortly."
         )
         st.stop()
@@ -65,8 +70,15 @@ def render() -> None:
         st.session_state["messages"].append({"role": "assistant", "content": reply})
 
         if copilot._manager.state == ConversationState.CONFIRMED:
+            try:
+                request_id = save_intake_request(copilot)
+                st.session_state["intake_request_id"] = request_id
+                # Clear copilot from session — request now lives in the DB.
+                del st.session_state["copilot"]
+            except Exception as e:
+                st.warning(f"Could not save to database: {e}. Your session is preserved locally.")
+                st.session_state["copilot"] = copilot
             st.session_state["intake_done"] = True
-            st.session_state["copilot"] = copilot
             st.rerun()
 
 

@@ -127,6 +127,63 @@ class IntakeRecord:
         """Fields where the stakeholder explicitly said 'I don't know'."""
         return [f.name for f in self._all_fields() if f.status == FieldStatus.UNKNOWN]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict for database storage."""
+        def _field_to_dict(f: IntakeField) -> dict[str, Any]:
+            return {
+                "name": f.name,
+                "value": f.value,
+                "status": f.status.value,
+                "weight": f.weight,
+                "tier": f.tier,
+            }
+
+        return {
+            "stakeholder_input_raw": self.stakeholder_input_raw,
+            "conversation_history": self.conversation_history,
+            "advisor_consultations": self.advisor_consultations,
+            "feature_type_confidence": self.feature_type_confidence,
+            "feature_name": _field_to_dict(self.feature_name),
+            "feature_type": _field_to_dict(self.feature_type),
+            "problem_statement": _field_to_dict(self.problem_statement),
+            "business_objective": _field_to_dict(self.business_objective),
+            "target_audience": _field_to_dict(self.target_audience),
+            "success_metrics": _field_to_dict(self.success_metrics),
+            "dependencies": _field_to_dict(self.dependencies),
+            "timeline_constraints": _field_to_dict(self.timeline_constraints),
+            "solution_approach": _field_to_dict(self.solution_approach),
+            "scope_inclusions": _field_to_dict(self.scope_inclusions),
+            "scope_exclusions": _field_to_dict(self.scope_exclusions),
+            "additional_context": _field_to_dict(self.additional_context),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "IntakeRecord":
+        """Reconstruct an IntakeRecord from a serialized dict."""
+        def _dict_to_field(d: dict[str, Any]) -> IntakeField:
+            return IntakeField(
+                name=d["name"],
+                value=d.get("value"),
+                status=FieldStatus(d["status"]),
+                weight=d.get("weight", 1),
+                tier=d.get("tier", "detail"),
+            )
+
+        record = cls(
+            stakeholder_input_raw=data.get("stakeholder_input_raw", ""),
+            conversation_history=data.get("conversation_history", []),
+            advisor_consultations=data.get("advisor_consultations", []),
+            feature_type_confidence=data.get("feature_type_confidence", 0.0),
+        )
+        for field_name in (
+            "feature_name", "feature_type", "problem_statement", "business_objective",
+            "target_audience", "success_metrics", "dependencies", "timeline_constraints",
+            "solution_approach", "scope_inclusions", "scope_exclusions", "additional_context",
+        ):
+            if field_name in data:
+                setattr(record, field_name, _dict_to_field(data[field_name]))
+        return record
+
     def to_generator_input(self) -> dict[str, Any]:
         """
         Transform the record into the format expected by agents/generator.py:
