@@ -30,6 +30,8 @@ def render() -> None:
         st.session_state["greeting_sent"] = False
     if "intake_request_id" not in st.session_state:
         st.session_state["intake_request_id"] = None
+    if "save_error" not in st.session_state:
+        st.session_state["save_error"] = None
 
     copilot: IntakeCopilot = st.session_state["copilot"]
 
@@ -46,6 +48,8 @@ def render() -> None:
 
     # ── Completion state ──────────────────────────────────────────────────────
     if st.session_state["intake_done"]:
+        if st.session_state.get("save_error"):
+            st.error(f"Database save failed: {st.session_state['save_error']}")
         ref = st.session_state.get("intake_request_id")
         short_ref = ref[:8] if ref else "pending"
         st.success(
@@ -76,7 +80,7 @@ def render() -> None:
                 # Clear copilot from session — request now lives in the DB.
                 del st.session_state["copilot"]
             except Exception as e:
-                st.warning(f"Could not save to database: {e}. Your session is preserved locally.")
+                st.session_state["save_error"] = str(e)
                 st.session_state["copilot"] = copilot
             st.session_state["intake_done"] = True
             st.rerun()

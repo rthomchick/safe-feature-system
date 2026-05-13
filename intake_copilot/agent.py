@@ -692,10 +692,7 @@ class IntakeCopilot:
     def _detect_summary_in_response(self, text: str) -> bool:
         """Return True when the copilot's response looks like a structured summary."""
         lower = text.lower()
-        if any(signal in lower for signal in self._SUMMARY_SIGNALS):
-            return True
-        # Fallback: multiple bold markdown headers suggest a structured summary
-        return text.count("**") >= 6
+        return any(signal in lower for signal in self._SUMMARY_SIGNALS)
 
     def _build_messages(self, current_user_message: str) -> list[dict[str, Any]]:
         """

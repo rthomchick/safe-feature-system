@@ -340,7 +340,7 @@ class ConversationManager:
 
         scorer = ReadinessScorer()
         rec = scorer.recommendation(record)
-        if rec["action"] in ("accept", "accept_with_caveats"):
+        if rec["action"] == "accept":
             return "summarize"
 
         unasked_context = [f for f in gaps["context"] if f not in self.asked_fields]
