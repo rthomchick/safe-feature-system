@@ -486,55 +486,53 @@ def stage_review():
             "the Improver infer from context."
         )
 
-        for section_name in weak_sections_data:
-            if section_name in INPUT_PROMPTS:
-                score = weak_sections_data[section_name]["score"]
-                max_pts = weak_sections_data[section_name]["max_points"]
-                pct = round(score / max_pts * 100)
+        with st.form("boost_inputs_form"):
+            for section_name in weak_sections_data:
+                if section_name in INPUT_PROMPTS:
+                    score = weak_sections_data[section_name]["score"]
+                    max_pts = weak_sections_data[section_name]["max_points"]
+                    pct = round(score / max_pts * 100)
 
-                current_value = st.session_state.additional_context.get(
-                    section_name, ""
-                )
+                    st.text_area(
+                        f"{section_name} — {score}/{max_pts} ({pct}%)",
+                        placeholder=INPUT_PROMPTS[section_name],
+                        height=100,
+                        key=f"boost_{section_name}"
+                    )
 
-                user_input = st.text_area(
-                    f"{section_name} — {score}/{max_pts} ({pct}%)",
-                    value=current_value,
-                    placeholder=INPUT_PROMPTS[section_name],
-                    height=100,
-                    key=f"boost_{section_name}"
-                )
-
-                if user_input and user_input.strip():
-                    st.session_state.additional_context[section_name] = user_input
-                elif section_name in st.session_state.additional_context:
-                    del st.session_state.additional_context[section_name]
-
-        st.divider()
-
-    # Action buttons
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        if weak_count > 0:
-            if st.button(
+            st.divider()
+            submitted = st.form_submit_button(
                 f"⚡ Improve {weak_count} Weak Section(s)",
                 type="primary"
-            ):
-                st.session_state.stage = "improve"
-                st.rerun()
-        else:
-            st.success("✅ All sections above 75% — no improvement needed.")
-            if st.button("→ Finish", type="primary"):
-                st.session_state.improved_spec = st.session_state.spec
-                st.session_state.improved_scorecard = scorecard
-                st.session_state.stage = "final"
-                st.rerun()
-    with col2:
+            )
+
+        if submitted:
+            st.session_state.additional_context = {
+                section_name: st.session_state[f"boost_{section_name}"]
+                for section_name in weak_sections_data
+                if f"boost_{section_name}" in st.session_state
+                and st.session_state[f"boost_{section_name}"].strip()
+            }
+            st.session_state.stage = "improve"
+            st.rerun()
+
+    else:
+        st.success("✅ All sections above 75% — no improvement needed.")
+        if st.button("→ Finish", type="primary"):
+            st.session_state.improved_spec = st.session_state.spec
+            st.session_state.improved_scorecard = scorecard
+            st.session_state.stage = "final"
+            st.rerun()
+
+    # Accept & Finish and Start Over — always outside the form
+    col1, col2 = st.columns([2, 1])
+    with col1:
         if st.button("→ Accept & Finish", type="secondary"):
             st.session_state.improved_spec = st.session_state.spec
             st.session_state.improved_scorecard = scorecard
             st.session_state.stage = "final"
             st.rerun()
-    with col3:
+    with col2:
         if st.button("↺ Start Over"):
             reset()
 
