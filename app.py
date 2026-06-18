@@ -410,7 +410,7 @@ def stage_review():
         run_id = st.session_state.run_id
         if trail and run_id:
             weak = [name for name, data in scorecard.get("sections", {}).items()
-                    if data["max_points"] > 0 and data["score"] / data["max_points"] < 0.75]
+                    if data["max_points"] > 0 and data["score"] / data["max_points"] <= 0.75]
             trail.log_event(run_id, REVIEW, {
                 "total_score": scorecard.get("total_score", 0),
                 "max_score": 100,
@@ -472,7 +472,7 @@ def stage_review():
         name: data
         for name, data in scorecard["sections"].items()
         if data["max_points"] > 0
-        and data["score"] / data["max_points"] < 0.75
+        and data["score"] / data["max_points"] <= 0.75
     }
     weak_count = len(weak_sections_data)
 
@@ -604,7 +604,7 @@ def stage_improve():
     originally_weak = {
         name for name, data in original_scorecard.get("sections", {}).items()
         if data["max_points"] > 0
-        and data["score"] / data["max_points"] < 0.75
+        and data["score"] / data["max_points"] <= 0.75
     }
 
     trail = st.session_state.trail
@@ -673,7 +673,7 @@ def stage_improve():
             name for name, data in improved_scorecard["sections"].items()
             if name in originally_weak
             and data["max_points"] > 0
-            and data["score"] / data["max_points"] < 0.75
+            and data["score"] / data["max_points"] <= 0.75
         ]
 
         # Regression check: any originally-strong section now failing?
@@ -682,7 +682,7 @@ def stage_improve():
             name for name, data in improved_scorecard["sections"].items()
             if name not in originally_weak
             and data["max_points"] > 0
-            and data["score"] / data["max_points"] < 0.75
+            and data["score"] / data["max_points"] <= 0.75
         ]
 
         if not regressions and still_weak_and_originally_weak and made_progress:

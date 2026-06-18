@@ -548,7 +548,7 @@ def improve_spec(
         recommendations = data.get("recommendations", "")
         failing_criteria = _get_failing_criteria(data)
 
-        if max_pts > 0 and pct < 0.75 and (failing_criteria or recommendations):
+        if max_pts > 0 and pct <= 0.75 and (failing_criteria or recommendations):
             if not failing_criteria and recommendations:
                 failing_criteria = [{
                     "name": "General improvements",
