@@ -17,6 +17,7 @@ from agents.reviewer import review_feature_spec, review_sections
 from agents.improver import improve_spec, polish_spec
 from prompts import capabilities, experiences, webpages
 from connectors.postgres import PostgresConnector
+from utils.section_names import normalize_scorecard
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -409,6 +410,7 @@ def stage_review():
                 use_advisor=st.session_state.get("use_advisor", False),
                 tracker=st.session_state.tracker
             )
+        scorecard = normalize_scorecard(scorecard)
         st.session_state.scorecard = scorecard
         logger.info("Reviewer complete — score: %d/100", scorecard.get("total_score", 0))
 
