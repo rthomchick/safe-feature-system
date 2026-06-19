@@ -726,7 +726,7 @@ def polish_spec(
         pct = score / max_pts if max_pts > 0 else 0
         failing_criteria = _get_failing_criteria(data)
 
-        if max_pts > 0 and 0.75 <= pct < 0.90 and failing_criteria:
+        if max_pts > 0 and 0.80 <= pct < 0.90 and failing_criteria:
             polish_candidates.append({
                 "rubric_name": section_name,
                 "score": score,
