@@ -781,7 +781,13 @@ def stage_improve():
                 tracker=st.session_state.tracker
             )
 
-        polish_changed = set(polish_spec.last_debug.get("polish_candidates", []))
+        candidates = polish_spec.last_debug.get("polish_candidates", [])
+        matched = polish_spec.last_debug.get("matched_in_place", [])
+        logger.info(
+            f"Polish targeted {len(candidates)} section(s), "
+            f"matched and modified {len(matched)}: {matched}"
+        )
+        polish_changed = set(matched)
 
         if polish_changed:
             with st.spinner("Re-scoring polished sections..."):

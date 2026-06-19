@@ -758,9 +758,7 @@ def polish_spec(
         if not matching_indices:
             continue
 
-        debug["matched_in_place"].append(
-            f"{rubric_name} → headings: {[sections[i]['heading'] for i in matching_indices]}"
-        )
+        debug["matched_in_place"].append(rubric_name)
 
         combined_content = "\n\n".join(
             sections[i]["full_text"] for i in matching_indices
