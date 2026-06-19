@@ -1,6 +1,10 @@
 # app.py
+import logging
 import uuid
 import streamlit as st
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [PIPELINE] %(message)s")
+logger = logging.getLogger(__name__)
 from agents.router import classify_feature
 from evaluation.eval_db import init_db
 from evaluation.token_tracker import TokenTracker
@@ -397,6 +401,7 @@ def stage_review():
                 st.info(f"Run cost so far: ${guard.run_cost:.4f}")
                 st.stop()
 
+        logger.info("Reviewer starting")
         with st.spinner("Scoring spec against 100-point rubric..."):
             scorecard = review_feature_spec(
                 st.session_state.spec,
@@ -405,6 +410,7 @@ def stage_review():
                 tracker=st.session_state.tracker
             )
         st.session_state.scorecard = scorecard
+        logger.info("Reviewer complete — score: %d/100", scorecard.get("total_score", 0))
 
         trail = st.session_state.trail
         run_id = st.session_state.run_id
@@ -620,6 +626,11 @@ def stage_improve():
             st.info(f"Run cost so far: ${guard.run_cost:.4f}")
             st.stop()
 
+    logger.info(
+        "Improver pass 1 targeting %d section(s): %s",
+        len(originally_weak),
+        sorted(originally_weak),
+    )
     with st.spinner("Improving weak sections (pass 1 of 2)..."):
         improved = improve_spec(
             st.session_state.spec,
@@ -651,6 +662,10 @@ def stage_improve():
     # Merge: original scores for untouched sections, fresh scores for changed ones
     improved_scorecard = _merge_scorecards(
         original_scorecard, partial_scorecard, changed_sections
+    )
+    logger.info(
+        "Improver pass 1 complete — score: %d/100",
+        improved_scorecard.get("total_score", 0),
     )
 
     if trail and run_id:
@@ -702,6 +717,11 @@ def stage_improve():
                     st.info(f"Run cost so far: ${guard.run_cost:.4f}")
                     st.stop()
 
+            logger.info(
+                "Improver pass 2 targeting %d section(s): %s",
+                len(still_weak_and_originally_weak),
+                still_weak_and_originally_weak,
+            )
             with st.spinner(
                 f"Running second pass on {len(still_weak_and_originally_weak)} "
                 f"remaining weak section(s)..."
@@ -730,6 +750,10 @@ def stage_improve():
             improved_scorecard = _merge_scorecards(
                 improved_scorecard, partial_scorecard_2, changed_pass2
             )
+            logger.info(
+                "Improver pass 2 complete — score: %d/100",
+                improved_scorecard.get("total_score", 0),
+            )
 
             if trail and run_id:
                 trail.log_event(run_id, IMPROVE, {
@@ -744,6 +768,10 @@ def stage_improve():
     # Skipped if already at 90+ or if Tier 1 didn't reach 80.
     tier2_total = improved_scorecard.get("total_score", 0)
     if 80 <= tier2_total < 90 and "parse_error" not in improved_scorecard:
+        logger.info(
+            "Polish check — score %d in range [80-89], firing Polish pass",
+            tier2_total,
+        )
         with st.spinner("Polishing sections to reach 90..."):
             polished = polish_spec(
                 improved,
@@ -768,6 +796,16 @@ def stage_improve():
                 improved_scorecard, partial_polish, polish_changed
             )
             improved = polished
+            logger.info(
+                "Polish complete — score: %d/100",
+                improved_scorecard.get("total_score", 0),
+            )
+
+    else:
+        logger.info(
+            "Polish check — score %d outside range [80-89], skipping Polish pass",
+            tier2_total,
+        )
 
     st.session_state.improved_spec = improved
     st.session_state.improved_scorecard = improved_scorecard
