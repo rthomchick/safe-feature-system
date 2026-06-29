@@ -45,13 +45,25 @@ st.set_page_config(
 init_db()
 
 
+def _get_api_key(key_name: str) -> str:
+    """Retrieve API key from Streamlit secrets or environment; raise on missing."""
+    try:
+        return st.secrets[key_name]
+    except Exception:
+        pass
+    value = os.environ.get(key_name)
+    if not value:
+        raise RuntimeError(
+            f"Missing required API key: {key_name}. "
+            f"Set it in .streamlit/secrets.toml or as an environment variable."
+        )
+    return value
+
+
 @st.cache_resource
 def _get_anthropic_client() -> anthropic.Anthropic:
     """Create a single shared Anthropic client for the dashboard process."""
-    try:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = _get_api_key("ANTHROPIC_API_KEY")
     return anthropic.Anthropic(api_key=api_key)
 
 # ---------------------------------------------------------------------------

@@ -11,15 +11,29 @@
 # approach where positional string surgery meant every edit could structurally
 # corrupt downstream sections.
 
-import anthropic
+import os
 import re
 
-try:
-    import streamlit as st
-    api_key = st.secrets["ANTHROPIC_API_KEY"]
-except Exception:
-    import os
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+import anthropic
+import streamlit as st
+
+
+def _get_api_key(key_name: str) -> str:
+    """Retrieve API key from Streamlit secrets or environment; raise on missing."""
+    try:
+        return st.secrets[key_name]
+    except Exception:
+        pass
+    value = os.environ.get(key_name)
+    if not value:
+        raise RuntimeError(
+            f"Missing required API key: {key_name}. "
+            f"Set it in .streamlit/secrets.toml or as an environment variable."
+        )
+    return value
+
+
+api_key = _get_api_key("ANTHROPIC_API_KEY")
 
 client = anthropic.Anthropic(api_key=api_key)
 

@@ -2,16 +2,29 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Optional
 
 import anthropic
+import streamlit as st
 
-try:
-    import streamlit as st
-    _api_key = st.secrets["ANTHROPIC_API_KEY"]
-except Exception:
-    import os
-    _api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+def _get_api_key(key_name: str) -> str:
+    """Retrieve API key from Streamlit secrets or environment; raise on missing."""
+    try:
+        return st.secrets[key_name]
+    except Exception:
+        pass
+    value = os.environ.get(key_name)
+    if not value:
+        raise RuntimeError(
+            f"Missing required API key: {key_name}. "
+            f"Set it in .streamlit/secrets.toml or as an environment variable."
+        )
+    return value
+
+
+_api_key = _get_api_key("ANTHROPIC_API_KEY")
 
 from evaluation.token_tracker import TokenTracker
 from intake_copilot.models import (
